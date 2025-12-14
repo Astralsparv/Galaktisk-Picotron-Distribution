@@ -133,7 +133,7 @@ else
 	-- so maybe default grey icon ramp isn't so bad
 	local meta = _fetch_metadata_from_file("/system/.info.pod") or {}
 	_set_host_window_icon(meta.icon)
-	_set_host_window_title("Picotron") -- redundant; same as default
+	_set_host_window_title("Galaktisk Picotron") -- redundant; same as default
 end
 
 
