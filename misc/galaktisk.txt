@@ -1,7 +1,7 @@
---[[pod_format="raw",created="2025-12-14 19:06:24",modified="2025-12-14 19:06:32",revision=2]]
+--[[pod_format="raw",created="2025-12-14 19:06:24",modified="2025-12-14 19:28:36",revision=3]]
 
 # Welcome to the Galaktisk Distribution
 
-This comes packaged with Springloader (#springloader-2) and modified Galaktisk software.
+This comes packaged with Springloader (#springloader-3) and modified Galaktisk software.
 
 Designed for v0.2.1e
