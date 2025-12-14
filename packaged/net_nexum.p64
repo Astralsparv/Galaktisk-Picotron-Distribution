@@ -1,0 +1,4572 @@
+picotron cartridge // www.picotron.net
+version 2
+
+:: fonts/
+:: gfx/
+:: map/
+:: pageHandlers/
+:: popups/
+:: self/
+:: self/404/
+:: self/docs/
+:: self/docs/lua/
+:: self/newtab/
+:: self/script/
+:: self/welcome/
+:: sfx/
+:: cache.lua
+--[[pod_format="raw",created="2025-11-15 23:49:54",modified="2025-11-16 07:36:08",revision=13]]
+local cachepath="/appdata/netnexum/cache/"
+mkdir(cachepath)
+
+function cacheFile(url, data)
+	local prot = url:prot()
+	--no protocol == likely a self page
+	if (not prot) return
+	
+	if (prot=="https") prot="http"
+	
+	local urlstr=tostr(url)  -- assuming url can be converted to string
+	local rest=urlstr:sub(#prot+5,#urlstr)  -- strip protocol
+	local filepath=(prot.."/"..rest)
+	local dirpath=filepath:match("(.*/)")
+	
+	local parts = {}
+	for part in dirpath:gmatch("[^/]+") do
+		add(parts,part)
+		local dir=table.concat(parts,"/")
+		mkdir(cachepath..dir)
+	end
+	store(cachepath..filepath,data)
+end
+
+function getCachedFile(url)
+	local prot = url:prot()
+	--no protocol == likely a self page
+	if (not prot) return
+	
+	if (prot=="https") prot="http"
+	
+	local urlstr=tostr(url)  -- assuming url can be converted to string
+	local rest=urlstr:sub(#prot+5,#urlstr)  -- strip protocol
+	local filepath=(prot.."/"..rest)
+	return fetch(cachepath..filepath)
+end
+
+--fetch with caching
+function ffetch(path,allowcache)
+	--handle self: protocol
+	if (path:prot()=="self") then
+		path=path:sub(8,#path)
+		path="self/"..path
+	end
+	--redirect to main.picoml if nil
+	if (path:ext()==nil) then
+		if (path:sub(-1)!="/") path..="/"
+		path..="main.picoml"
+	end
+	local dat=fetch(path)
+	if (dat) then
+		--cache the file
+		if (options.cache) then
+			cacheFile(path,dat)
+		end
+	elseif (not nocache) then
+		--file is not found, see if it's in cache
+		dat=getCachedFile(path)
+		printh("Running from cache, unable to reach website")
+		notify("Running from cache, unable to reach website")
+	end
+	return dat
+end
+:: crash.lua
+--[[pod_format="raw",created="2025-12-01 22:31:22",modified="2025-12-01 22:32:20",revision=4]]
+local crashcheckinterval=env().interval or 1
+local tocheck=time()+crashcheckinterval
+local id=env().id or -1
+function _update()
+	if (time()>tocheck) then
+		local processes=fetch("/ram/system/processes.pod")
+		local crash=true
+		for i=1, #processes do
+			if (processes[i].id==id) crash=false break
+		end
+		if (crash) then
+			send_message(2, {event="shutdown",proc_id=2})
+		end
+		tocheck=time()+crashcheckinterval
+	end
+	flip()
+end
+:: data.lua
+--[[pod_format="raw",created="2025-11-15 21:04:38",modified="2025-12-03 18:49:16",revision=190]]
+local path="/appdata/netnexum/"
+
+mkdir(path)
+options=fetch(path.."options.pod") or {}
+if (options.scrollSpeed==nil) options.scrollSpeed=8
+if (options.invertScrollX==nil) options.invertScrollX=false
+if (options.invertScrollY==nil) options.invertScrollY=false
+if (options.cache==nil) options.cache=true
+if (options.pageScripts==nil) options.pageScripts=true
+
+store(path.."options.pod",options)
+otabs=fetch(path.."tabs.pod") or {
+	"self://welcome",
+	"https://astralsparv.neocities.org/picoml/changelog.picoml"
+}
+:: debug.lua
+--[[pod_format="raw",created="2025-11-29 19:16:33",modified="2025-11-30 00:21:44",revision=5]]
+function decomp(table, indent, seen)
+    seen = seen or {}
+    if seen[table] then
+        return "<cycle>"
+    end
+    seen[table] = true
+    
+    res=""
+    indent=indent or 0
+    local pad=""
+    for i=1, indent do
+    pad..=" "
+    end
+    for key,val in pairs(table) do
+    local k=key
+    if (type(k)=="number") then
+        k="["..k.."]"
+    end
+    if (type(val)=="table") then
+        res..=k.."={\n"
+        res..=pad..decomp(val,indent+1,seen).."\n"
+        res..="},"
+    else
+        local v=val
+        if (type(v)=="string") then
+            v="\""..v.."\""
+        end
+        res..=pad..k.."="..tostr(v)..","
+    end
+        res..="\n"
+    end
+    res=res:sub(1,#res-2)
+    return res
+end
+:: downloads.lua
+--[[pod_format="raw",created="2025-11-30 18:02:23",modified="2025-11-30 20:30:01",revision=28]]
+local path="/downloads/"
+mkdir(path)
+function downloadFile(website,source,filename)
+	local loc=path..filename
+	local ext=loc:ext()
+	loc=loc:sub(1,#loc-#ext-1)
+	if (fstat(loc.."."..ext)==nil) then
+		store(loc.."."..ext,source)
+	else
+		local n=1
+		loc..="_"
+		while (fstat(loc..n.."."..ext)!=nil) do
+			n+=1
+		end
+		loc=loc..n
+		store(loc.."."..ext,source)
+	end
+end
+
+on_event("download",function(msg)
+	if (trustedPIDs[msg._from]) then
+		downloadFile(msg.website,msg.source,msg.filename)
+	end
+end)
+:: functs.lua
+--[[pod_format="raw",created="2025-11-15 20:43:30",modified="2025-12-03 15:44:55",revision=26]]
+function swapCase(txt)
+	txt=txt:gsub("%a", function(c)
+		if c:match("%l") then
+			return c:upper()
+		else
+			return c:lower()
+		end
+	end)
+	return txt
+end
+
+function getPageFormat(url)
+	local ext=url:ext()
+	if (pageFormats[ext]) return pageFormats[ext],ext
+	return pageFormats.raw,nil
+end
+
+function cleanLink(url)
+	local url,_=url:match("([^?]*)%??(.*)")
+	url=url:sub(#url:prot()+4,#url)
+	local rem="/main.picoml"
+	if (url:sub(#url-#rem+1,#url)==rem) then
+		url=url:sub(1,#url-#rem)
+	end
+	return url
+end
+:: main.lua
+--[[pod_format="raw",created="2025-11-14 15:19:59",modified="2025-12-08 19:51:31",revision=986]]
+--[[
+3d effect inspired by @meivuu with super piconet explorer!
+]]--
+
+poke(0x4000, get(fetch"/system/fonts/lil_mono.font")) -- mono font
+trustedPIDs={} --pids to trust, e.g: for request popups
+--tab height
+local th=17+3+12
+
+local fullscreen=false
+if (stat(317)==3) then --it's a .bin export
+	windowData={
+		width=480,height=270
+	} --fullscreen on exports
+	fullscreen=true
+	--exports are fullscreened & crash pt when the browser closes, cannot pause
+	create_process("crash.lua",{id=pid(),interval=1})
+	window{pauseable=false}
+else
+	windowData={
+		width=300,height=200
+	}
+end
+
+include "sandboxFunctions.lua"
+include "debug.lua"
+include "cache.lua"
+include "tabs.lua"
+include "object.lua"
+include "functs.lua"
+include "data.lua"
+include "downloads.lua"
+
+scroll={
+	x=0,y=0
+}
+
+scrollbar={
+	visible=false
+}
+
+pageFormats={
+	picoml="pageHandlers/picoml.lua",
+	md="pageHandlers/markdown.lua",
+	raw="pageHandlers/raw.lua"
+}
+
+pageData={
+	width=windowData.width-5,height=windowData.height,
+	background=7
+}
+
+if (not fullscreen) then
+	window{
+		width=windowData.width,height=windowData.height,
+		title="Net Nexum"
+	}
+end
+
+curs={}
+curs.x, curs.y, curs.b, curs.wheelx, curs.wheely = mouse()
+curs.click,curs.hover=false,false
+curs.lb=0
+
+function _init()
+	for i=1, #otabs do
+		openTab(otabs[i])
+	end
+	if (#otabs==0) then
+		openTab("self://welcome")
+	end
+end
+
+function _update()
+	tabs[tabs.selected].delay-=1
+	local page=tabs[tabs.selected].page
+	local lastw,lasth=windowData.width,windowData.height
+	local screen=get_display()
+	windowData.width,windowData.height=screen:width(),screen:height()
+	if (windowData.width!=lastw or windowData.height!=lasth) then
+		page:setDisplay(windowData.width,windowData.height-th)
+	end
+	curs.lb=curs.b
+	curs.x, curs.y, curs.b, curs.wheelx, curs.wheely = mouse()
+	curs.hover=false
+	if (curs.b==1 and curs.lb==0) then
+		curs.click=true
+	else
+		curs.click=false
+	end
+	navbar:update_all()
+	local cursorData={
+		x=curs.x,
+		y=curs.y-th,
+		b=curs.b,
+		wheelx=curs.wheelx,
+		wheely=curs.wheely,
+	}
+	if (tabs[tabs.selected].delay<=0) then
+		local dat=page:update({mousedata=cursorData})
+		window{cursor=dat.cursorSprite}
+	end
+	--keybinds
+	--tab & numbers is false when ctrl is held?
+--	if (key("ctrl")) then
+--		for i=1, min(10,#tabs-1) do
+--			local k=tostr(i)
+--			if (k=="10") k="0"
+--			if (keyp(k)) then
+--				tabs.selected=i
+--			end
+--		end
+--		if (keyp("tab")) then
+--			if (key("shift")) then
+--				local n=tabs.selected-1
+--				if (n<1) n=#tabs
+--			else
+--				local n=tabs.selected+1
+--				if (n>#tabs) n=1
+--			end
+--			selectTab(n,true)
+--		end
+--	end
+--	notify(stat(1)*100 .."%")
+end
+
+function _draw()
+	cls(7)
+	local page=tabs[tabs.selected].page
+	--tabs
+	local w,h=windowData.width,windowData.height
+	local pw,ph=pageData.width,pageData.height
+	cls(23)
+	drawTabs()
+	rectfill(0,17,w,th,30)
+	
+	spr(page:draw(),0,th+1)
+	navbar:draw_all()
+end
+:: object.lua
+--[[pod_format="raw",created="2025-11-15 01:52:30",modified="2025-11-16 04:53:29",revision=68]]
+function mouseover(x,y,w,h,hoverset)
+	if (hoverset==nil) hoverset=true
+	if (hoverset) then
+		if (curs.hover) return false
+		curs.hover=(curs.x>=x and curs.y>=y and curs.x<=x+w and curs.y<=y+h)
+		return curs.hover
+	else
+		return (curs.x>=x and curs.y>=y and curs.x<=x+w and curs.y<=y+h)
+	end
+end
+
+function liveObject(idlesp,hoversp,x,y,action,pointer,hover)
+	--force hover
+	if (hover==nil) hover=false
+	idlesp,hoversp=get_spr(idlesp),get_spr(hoversp)
+	click=false
+	if (hover or mouseover(x,y,idlesp:width(),idlesp:height())) then
+		spr(hoversp,x,y)
+		hover=true
+		if (pointer) then
+			window{cursor="pointer"}
+		end
+		if (curs.click) then
+			click=true
+			curs.click=false
+			if (action) action()
+		end
+	else
+		spr(idlesp,x,y)
+	end
+	return hover,click
+end
+:: pageHandlers/markdown.lua
+--[[pod_format="raw",created="2025-12-06 22:15:33",modified="2025-12-07 00:23:58",revision=248]]
+--[[
+
+MODIFIED FORM OF PICOML V2.3 LIBRARY
+
+Support from @soupster to embed the font in this .lua library
+Minie & widesquat font by @thelxinoe5 
+]]--
+
+--[[
+
+Copyright (c) 2008 Niklas Frykholm
+Copyright (c) 2015 Peter Melnichenko
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+string matching taken from https://github.com/mpeterv/markdown
+]]--
+
+local ffetch=fetch --replaced in :init() - ensures locality
+local webWarning=printh --replaced in :init() - ensures locality
+local pageDirty=false
+local buildingPage=false
+
+local scripting=false
+
+local fonts={
+	widesquat={
+		name="Widesquat",
+		width=8,
+		height=8,
+		data=unpod("b64:bHo0APoFAAArBgAA8oFweHUAAygACAAABAUIBhADkA9wDycAD3EPdwAOBkAPdg9wAAIQDxAPYAAPIAEgDQAfcAAHIA9gBw8nEA4ADQAHBgEQD2APZg9gABwADPAmRzAnQAcFB0AFAgVABQAFQCUwBAYHBgQgAQMHAwEgByFAJAcgBQcCBwJAAnABAlATIBVQAgUCwCYABiAVUA8WDz8EAPAJIAYPDwMPDA8PBhAPDQ8MBgMPCyAGCwYLGgDwHgNQBiMGIAMmAyALBg8PBgswBgoGcAYDMAeAAyAPDCYDIAYrBiAHNiAHCQYDCgYA8QcJByAbChkgCgMHCAcgBgMHCwYgCgkmUADwEgYgBgsPDggGQAMAA0AGAAYDEAkGAwYJMAcABzADBgkGA0AA8A8ABiAODxMPGwMPHiAGCwobIAcLBwsHIA4jDiAHKwdYACADCgYA8B0TIA4DDxsPEw4gGwobIEMgCiYHIBsHGyAzCiAfFi8rIA8TDxcPGx8TIA4rB0QAYBMgBhsHDgoA8REbIA4DCggHIAo2IDsOICsKBiAvKx8WIBsEGyAbJiAKCMkA8FgjByADJgkgByYHIAYLkAogAwZgDhsOIAMHGwcwDhMOIAgOGw4wBgsHDiAOBgoWMA4LCgkHEAMHKyADACMgBgAmAxADGwcLIDMGMA8XLyswByswDhsHMAcbBwMgDhsOCSAGIzAHAwQHTwGgCTArDjAbCgYwHY0BYDALFgswG6AA8hIHBAMHIA4GBwYOIEMgBwYOBgdADAtABgsGME9-IA9VDyoEAPIGIA9BD38fXQ8_IAEfYw93ASAPEQ9EBADwMyAPAg8eDgoIIA4PFx8fDiAPGx8fDgQgDxwPNg93DzYPHCAeDx8ODwogDxwBD38PKg86IAEPZw9jD2cBIA9-D10Pf1wA8BwgDxwUFyABD2MPaw9jASAEDg8fDgRAD1VAAQ9zD2MPcwEgCA8cD38BDyIgGgDwEA4CIAEPdx9jATAPBQ9SDyBADxEPKg9EMAEPaw93D2taAPAjAAUABSBPVSAOBA8eDy0PJiAPER8hDyUPAiAPDA8eHyAPHCAIDx4IDyQPGiAPTgQBD0UkAFAiD18fEq0A8AMeCA88DxEGIA8QDwwPAg8MDxAdAPAFeh8iDxIgDx4PIAAPAg88IAgJDxAeAFAgLwIPIlIA8AIBCA8MCCAPEg8-DxIPAg8cICEA8FB_BA84IA8CBw8yDwIPMiAKDwIODxAPHCABH0APIA8YIAEPEBgNIAgPOAQPAgkgDzIHDxIPeA8YIA96D0IPAg8KD3IgDwkBD0sPbQ9mIA8aDycPIg9zDzIgCQ9KH0kPRm8AEToEAHAaIA8jD2IfigDwOA8MAAgPKg9NMA8MDxIPIQ9AIA99D3kPEQ89D10gAQkIDx4PLiAGDyQPfg8mDSAPJA9OBA9GCSAPCgkPWg9GDzAgDx4EAw9EuQDwDRQBDyQYIA86D1YPUg8wCCAEDxwEAwYgCA8CAQ9HAUIfIg8myADyAgwPJA9yDzAgBA82DywPJg9kEwA0Qg8wtwDwICMPEiAOD2QPHA8oD3ggBA8CBg8rDxlADg0IMA8KAg8SBDAECg8VDw0wBA8MBg4gYQAgFAS0AfATMAgOGCAIAQ8iDyAMIAEoASAND34MDxQPEiAEAQ8kDyIPMn0BQAEIIAkOABANpgCxfA8SDQggAS8gASDoAEAkDyANHgSxJg0PDCABCw0MDyY9AAGeAUEiDyQLGADxAw8iDy0PMA8MIA8cCAEIBCAfKhgAMA8cAA4A8AcUBQ8kBCAIARgEMAUQASABCw8oDQ8smQDwCjAPXgggKw0OIA0fJA9ED0IgDwIDFwUgARs_ABIChAFgMAgBCB8qNgDBFAgNIAkAAQADIAgEIgFAfiAPQEwAgWgGIAMEAwQJmgDwQxQgBS0BIAMNAw0DIAEAAQsMICoLDSAvFA9UDzIgFw8iDxIPDiABLyIBIAEOCw0CIAELCQsMIAYbDQ8OMA8VDQ8IBjAEAw8UBEACDwgDMAUMDQVvAKBjDQggCA0KBAgg")
+	},
+	minie={
+		name="Minie",
+		width=8,
+		height=8,
+		data=unpod("b64:bHo0AC8DAACtBgAA8KpweHUAAygACAAABAQIBhABkA9gDyAAD2EPdxAGD3AwD3YQARAPEA9gAA8gASAOAB9wQA9gBw8nEA93AA4ABwYgD2APZhAPRw9gAA3wJm8-ICxADA8zDEALDwwLQAsAC0ArMA8wDzwMCg8wIAMPDwwJAxAPPjZAPzAPPgAPYw82DxwPPggFCDAPGIAPDA8YUB8MIB8KQAQCBLAhAAEgHwVQAg8fAg4CIA8CDwcDBgcPAhAPBQQPAgEPBRMAEAUEAPAgAiARUA8CIQ0gAS0BIA8FDQcNCzANBw1wDQEwB4ABIAQtASANKw0gAz0gAwQNAQcGAPAsBAMgGwcUIAcBAwQDIA0BAwsNIAcELSANCw0LDSANCwYEDTABAAFADQANASAEDQENBDAHAAcwAQ0EDQE-APAOAA0gBg8JDw0BBiANCwcbIAMLAwsDIAYhBiADKwNWACABBwYA8BoRIAYBCg8JBiAbBxsgQSAkCw0gGwMbIDEHIBIvFSAPCQ8LCh8JIAYrA0EAYBEgDRsDBgoA8g4bIAYBBwQDIAc9IDsGIDsNIC8VEiAbDRsgGy0gB8IA8FghAyABLQQgAy0DIA0LkAcgDQRgBhsGIAEDGwMwBhEGIAQGGwYwDQsDBiAEDQcdMAYLBwQDEAEDKyABACEgDQAtARABGwMLIDENMA8LLxUwAyswBhsDMAMbAwEgBhsGBCANITADAQ0DRwHyKQQwKwYwGwcNMBwOAjALHQswGwYEDSADDQEDIAYNAw0GIEEgAw0GDQMwBAcBQA0LDTBPfyAPVQ8qBADyBSAPYw9-H10FIAUfYw93BSAPEQ9EBADwDiANDx4PDg8PCCAPDg8XHg8OIAIeCQQgDxwPNg93GAL0dyAZDgkCIAoFD38PKg86IAUPZw9jD2cFIA8eDy0PPw8zDx4gBg0GEyAFD2MPaw9jBSAECQ4JBEAPVUAFD3MPYw9zBSAICg9-BQ8iIA4JBAkOIAUPdx9jBTALD1IPIEAPEQ8qD0QwBQ9rD3cPawUgD38ADAAMIE9VMA9_D0IPUg9KD0IPfhAHDABABxAHAQoAHwEJAP---2hQD0oBBwA=")
+	},
+	picotron={
+		name="Picotron lil",
+		width=5,
+		height=10,
+		data=unpod("b64:bHo0AMwGAAAnBwAA8BJweHUAAygACAAABAUJCxADYAEgDxBAB7APcAAPECABDnAJAPAlFzAO8DRvDyAtQA0JDUAJBglACQAJQCkwDA8ODQoMIAMHDQcDEAcRgBgKAA8RDxsKDx8PBAQA8AYwBoAGDFAWABVQBgkGwEIAAgAVcA8eAAEEAPA6EA8ECgEGCAcEEAkEAgkgAgUCCwUPCgAUUARSBAJUAhAFAgcCBTAECgRwBAIwDYACEBQSEQAGCQ8NCxkGAAQGNAoABgkIBAIBDQgAMAYICRUA8ioVDRQADREHGAcABhEHGQYADRgEIgAGGQYZBgAGGQoYBjACAAJABAAEAiAEAgECBDANAA0wAgQIBAJMAPAOAAIQCgkeAQoABhkNKQAHGQcZBwAGCSEJBgAHSQdZACARDQYAkCEAChEOGQoAKSUA8QFCBwAKOAkGABkFAwUZAFENAwHQHxUvEQAJCw45AAZJBkkA8QEhAAY5CwYPDAcZBykABgkBsADxhA8fVABZCgBJBQMALxEfFQ8bDxEAKQYpACkKGAcADQgEAhENAAdRBwAREhQAClgKAgWwDQACBHAGCAoJCgARBykHIAohCgAYCikKIAYJDQEKAA8MEg0iIAoZCggGEQc5AAIAAyIHAAgADCgJBhEJBQMFCQADQgYgCx8VHxEgBzkgBikGIAcZBxEQChkKGBAPDQMhIJIB4AASDSIMIDkKICkFAyAfmgDgCiAZBhkgKQoIBhANCAZzAfYMEgEiBgAiACIGFAgkBgAOBVATHCBvfwAPVQ8qBADwCAAPQQ9jD38fXQ93Dz4ACx9jD3cLD0ELIwEWRAQA8A8ABAwPfAsPHw8YDxAADxwPJh9fD38LDxwADyIPdx8KAPAQCAAPKg8cDzYPdw82DxwPKgAfHAsPXQ8cHxQACA8cCy4AsSoPOgALD2cPYw9nYwARC3cA8QZ-D2MLAA8YD3goDQ8HAAsPYw9rD2MgAPMICA8UDyoPXQ8qDxQIMA9VMAsPcw9jD3McADEcD39wAPEEIhAPfw8iDxQIBw8iD38ACw93Hz8A8wEQDgQAD1APIBAPEQ8qD0QABwBxCw9rD3cPa0UAQQ9-AAkCAPAEb1UABA8fBAsPVQ9NDyYQDyIvQj4A8D8YAAsfQA8gDxwACgAPPwgED04PMwAED18PhAsfRQ8mAA9CD58Poh8iDykPMQAICw8QD3wPIA8BDw4AD0APMAwCDAEPQAAfEQ99LxEOEAsaAGN_ABgGDxAlAPETMg9CDyIKAAgJDA4MCAQAFQkFDzICDzwAAw8QCA-_DxAIAZYA8QkP5AQPEg-iAAQPPwQPNA9MD0APPxADD0ObAPE5HgAJCCQIAQAfEA94BBIPfAAED28EHyQPcg_yAA8BDz0fAQ8FD3kCAAgfCQsPSw-tD24AEg87D0YPQg-jD2IQAw9SD5EfiQ9GpwDwAh8RDzkPXRAPEw8SDzEPUQ8RygAA8gH1BQgND1IPiRAMDxIPIQ9AD4AQD30PMADwWAALCAsIDw4POQ9PAAgEDyQGDyYPIA0ADyQPTgQPBg8FD0YPOAAfEg98D5YPig9EAQAIDx4EBx9EDzgQDxIJD0IPMhQADQ89H1MPUQ89CAAYDzgIDA8aD2wADAACDzoPRg9AAwAPICVWAACSAZUKAw9GD0EPTAPJADVDD8IXACUgChcA8A4jDxoADwcCD24PGQ8UAgMAFAIPDg8SD5EPcSAPOFcA8CQPIAogDxQLDyQYIA86D1YPUgEIIAgPOAgDDAAJD0APJA8UBAIPAQAPIA0MDwsoAAgJH0EMAPAIAAtICQAeD-4BDygPJgEABAkfRB9CD3GgAfEAGA9_HQAED3wPQg9BDg0MCwDwCBIPEQ0YAA8-PgYOABUJFQ0IAA8GCA8BgQDzEg4PHwAJH0AOAQ9MD4MABA90D08PJBQPeAAfQQ9CHg0PDkwA8AlJAQ9QDAAPOA8OCAkYBAAPRQ9JD0oPQA4iAPAGCwAJKAQAEgcPMiIAGAkoBBALIAkQvwDwHEQPKA0PLA8DAAgPfg9AAQwPKg9JAC4dCA8HAB8UDyQVH0EAHwEPGQ8HHwFGAlQvQA4NDOIBkCAICQgfKg9JDJ8A8g8FDxQIDQAPHg9gDwYPOAAPBw94ABgUD0IPcg_PAB9pAIAKD0cABhQJFCAAwHIPTwUPEiQQCx4dCUAAUA9_H0AJqABgEw4PHAA1GAHwCk8UD1IPMQA-AQ9BDzEPDwAJP0EJBwAJFwMdAEAJEw98CADwIA8BDwYTDg0PDzAPKg4NDCAECw8kFDAPHB0LIA8eDQINAgAYBA9jDRgAGA0BBBgA")
+	},
+	p8={
+		name="Pico8",
+		width=4,
+		height=8,
+		data=unpod("b64:bHo0AHoFAACjBQAA8INweHUAAygACAAABAQIBhAD8GpHMCdABwUHQAUCBUAFAAVAJTAEBgcGBCABAwcDASAHIUAkByAFBwIHAkACcAECUBMgFVACBQLAIgACIBVQBQcFBwUgBwMGBwIgBQQCAQUgEwYFByACAVACIQIgAiQCIAUCBwIFMAIHAmACAUAHgAIgBCIBIAclByADIgcgBwQHAQYA8QkGBAcgFQcUIAcBBwQHIBEHBQcgBzQgBwUJAPANBQcUMAIAAkACAAIBIAQCAQIEMAcABzABAgQCATwA8DQAAiACFQEGMAYFBwUwEwUHMAYRBjADFQMwBwMBBjAHAxEwBgEFBzAVBwUwBxIHMAcSAzAFAxUwIQYwFxUwAyUwBhUDPADwFQEwAgUDBjADBQMFMAYBBAMwByIwJQYwFQcCMBUXMAUSBTAFBxYA8SAEAQcgAyEDIAEiBCAGJAYgAgWQByACBFAHBQcVIAcFAwUHIAYhBiADJQcgBwEDAQYAUBEgBhEF4wAwFSAH9wDwBCIDIBUDFSAxByAXJSADNSAGJQPoAGARIAIVAwZFAPALFSAGAQcEAyAHMiA1BiAlBwIgJRcgFQIVIBUhAfIUBwQCAQcgBgIDAgYgQiADAgYCAzAEBwFAAgUCME9-IA9VDyoEAPIGIA9BD38fXQ8_IA4fYw93DiAPEQ9EBADwMiAEDzwPHA8eDxAgDxwPLh4PHCAPNh4PHAggDQ82D3cPNg0gHQ4NDxQgDQ4Pfw8qDzogDg9nD2MPZw4gD38PXQ9-WwDwESAPOBgfDiAOD2MPaw9jDiAIDQ4NCEAPVUAOD3MPYw9zEgCgD38ODyIgDg0IDSkA8Ap3H2MOMAUPUg8gQA8RDyoPRDAOD2sPdw9rVwDwIgAMAAwgT1UgDw4EDx4PLQ8mIA8RHyEPJQIgDwwPHh8gDSAIDx4IDyQPGiAPTgQOD0UiAHAiD18fEgogGQCwPA8RBiAPEA8MAgvXAPB4Ig96HyIPEiAPHg8gAAIPPCAICQ8QAgsgIg8iDSAIDggLCCAPEg8-DxICDSAJDxAPfgQPOCACBw8yAgMgDw8CDw4PEA0gDh9ADyAPGCAODxAYASAIDzgEAgkgAwcPEg94DxggD3oPQgIKD3IgDwkOD0sPbQ9mIA8aDycPIg9zAyAJD0ofSQ9GZQAROgQA8mQaIA8jD2IfIg0gCwAIDyoPTTALDxIPIQ9AIA99D3kPEQ89D10gDgkIDx4PLiAGDyQPfg8mASAPJA9OBA9GCSAKCQ9aD0YPMCAPHgQFD0QPOCAPFA4PJBggDzoPVg9SDzAIIAQNBAUGIAgCDg8gDSAfIg8mvADyAgwPJA9yDzAgBA82DywPJg9kEwA0Qg8wrwAQIygB8BoOD2QNDygPeCAEAgYPKw8ZQA8OAQgwCg8fDxIEMAQPDw8VDw0wBAsGD8oB8BogDxQEAiAPMAgPDhggCA4PIg8gDCAOKA4gAQ9_DA8UDxIgBA4PJA8iA2sBQA4IIAkNAPEBAQggBA98DxIBCCAOLyAOIOQA8QIkDyABIAYHDyYBCyAOBwEMBToAAI0BUA8iDyQHFgDwAg8iDy0PMAsgDxwIDggEIB8qFgAwDxwADQDwBxQNDyQEIAgOGAQwDRAOIA4HDygBDyyTAPMOMA9eCCAnAQ8OIAEfJA9ED0IgAg8eEg0gDhcBCyB7AWAwCA4IHyo2ANEUCAEgCQAOAA8eIAgEHgFAfiAPQE0AIGgGcwExCgQJmQDwExQgDSEOIAoBCgEKIA4ADgcMICMHASAvFA9UDzIgEg8iDxIgAWEvIg4gDgW9APASBwkHDCAGFwEPDjAPFQEPCAYwBAoPFARACw8ICjANDAENcACgYwEIIAgBAwQIIA==")
+	},
+}
+
+local activeFont={
+	width=5,
+	height=10
+}
+
+local rootFolder="/appdata/picoml/"
+local localStorageFolder=rootFolder.."localStorage/"
+local sharedStorageFolder=rootFolder.."sharedStorage/"
+mkdir(rootFolder)
+mkdir(localStorageFolder)
+mkdir(sharedStorageFolder)
+local baseurl
+local page={}
+
+local function loadFont(font,primary)
+--	memmap(0x4000,fonts.minie.data)
+	if (type(font)!="table") then
+		font=fonts.picotron
+	end
+	
+	if (not secondary) then
+		font.data:poke(0x4000)
+		activeFont.width=font.width
+		activeFont.height=font.width
+	else
+		font.data:poke(0x5600)
+		activeFont.width=font.width
+		activeFont.height=font.width
+	end
+end
+
+local function cleanURL(url)
+	local url,_=url:match("([^?]*)%??(.*)")
+	url=url:sub(#url:prot()+4,#url)
+	local rem="/main.picoml"
+	if (url:sub(#url-#rem+1,#url)==rem) then
+		url=url:sub(1,#url-#rem)
+	end
+	local sectors=url:split("/")
+	return sectors[1] or url
+end
+
+--hell
+local function rPath(path, base)
+	base=base or baseurl
+	local prot = ""
+	
+	if (path:prot()) return path
+	
+	local basePath,baseQuery=base:match("^([^?]*)%??(.*)$")
+	local pathPart,query=path:match("^([^?]*)%??(.*)$")
+	if path:match("^%?") then
+		return basePath..path
+	end
+	
+	local pathQuery=(query!="" and query) or nil
+	
+	if (basePath and basePath!="/") then
+		local baseProt = basePath:prot()
+		prot=baseProt and (baseProt.."://") or ""
+		if (baseProt) then
+			basePath=basePath:sub(#prot+1)
+		end
+		
+		local last=basePath:match("[^/]+$")
+		if (last) then
+			last=last:match("^[^?]+")
+			if (last:ext()) then
+				basePath=basePath:sub(1,#basePath-#last)
+			end
+		end
+		
+		if (basePath:sub(-1)!="/") then
+			basePath..="/"
+		end
+		if (not (path:match("^/"))) then
+			pathPart=basePath..pathPart
+		end
+	end
+	
+	local segments = {}
+	for part in pathPart:gmatch("[^/]+") do
+		if (part=="..") then
+			if (#segments>0) then
+				table.remove(segments)
+			end
+		elseif (part!="." and part!="") then
+			table.insert(segments,part)
+		end
+	end
+	
+	pathPart=table.concat(segments, "/")
+	
+	local lastSegment=pathPart:match("[^/]+$") or ""
+	local isFile=(lastSegment:ext()!=nil)
+	local finalQuery=pathQuery or (isFile and baseQuery)
+	if (finalQuery and finalQuery!="") then
+		pathPart..="?"..finalQuery
+	end
+	return prot..pathPart
+end
+
+--resolved fetch, supports ../ and stuff
+local function rFetch(path)
+	return ffetch(rPath(path,baseurl))
+end
+
+--sandbox functs
+
+local function sandboxedFunct(funct,safe_env,nilerror)
+	if (nilerror==nil) nilerror=true
+	if safe_env and type(safe_env[funct]) == "function" then
+		local ok, err = pcall(safe_env[funct],safe_env)
+		if not ok then
+			webWarning(funct.."() error: " .. tostring(err))
+		end
+	elseif (nilerror) then
+		webWarning(funct.." not found")
+	end
+end
+
+--helper
+local function swapCase(txt)
+	txt=txt:gsub("%a", function(c)
+		if c:match("%l") then
+			return c:upper()
+		else
+			return c:lower()
+		end
+	end)
+	return txt
+end
+
+local function openTab(url,replaceIndex)
+	--handle a lack of protocol
+	if (sub(url,1,4)!="self" and url:prot()==nil) then
+		url="http://"..url
+	end
+	--handle self: protocol
+	local display=url
+	if (url:prot()=="self") then
+		url=url:sub(8,#url)
+		url="self/"..url
+	end
+	local path,query=url:match("([^?]*)%??(.*)")
+	
+	--redirect to main.picoml if nil
+	local last=path:match("[^/]+$") or ""
+	if (last:ext()==nil) then
+		if (path:sub(-1)!="/") path..="/"
+		path..="main.picoml"
+	end
+	
+	if (query!="") then
+		url=path.."?"..query
+	else
+		url=path
+	end
+	local selff=false
+	if (type(replaceIndex)=="string") then
+		if (replaceIndex=="self") selff=true
+	end
+	page:newTab(url,selff)
+end
+
+local function openRelativeTab(url,replaceIndex)
+	if (url:prot()==nil) then
+		url=rPath(url)
+	end
+	openTab(url,replaceIndex)
+end
+
+--page building
+
+local function wrapText(text,width,charWidth)
+	charWidth=charWidth or 5
+	local res=""
+	local cx=0
+	local nl=1
+	local fwidth=0
+	local i=1
+	
+	if (text==nil) return "",0,0
+	while true do
+		local nextnl=text:find("\n",i)
+		local segment=nextnl and text:sub(i,nextnl-1) or text:sub(i)
+		
+		for word in segment:gmatch("%S+") do
+			local wordWidth=#word*charWidth
+			local spaceWidth=(cx>0) and charWidth or 0
+			
+			if (wordWidth+spaceWidth>width) then
+				res..="\n"
+				cx=0
+				nl+=1
+				spaceWidth=0
+			end
+			
+			if cx>0 then
+				res..=" "
+				cx+=charWidth
+			end
+			
+			-- split long word if wider than line
+			local start=1
+			while (start<=#word) do
+				local remainingWidth=width-cx
+				local fitChars=flr(remainingWidth/charWidth)
+				if (fitChars<=0) then
+					res..="\n"
+					cx=0
+					nl+=1
+					fitChars=flr(width/charWidth)
+				end
+				
+				local part=word:sub(start,start+fitChars-1)
+				res..=part
+				cx+=#part*charWidth
+				if (cx>fwidth) fwidth=cx
+				start+=fitChars
+				if (start<=#word) then
+					res..="\n"
+					cx=0
+					nl+=1
+				end
+			end
+		end
+		if (not nextnl) break
+		res..="\n"
+		nl+=1
+		cx=0
+		i=nextnl+1
+	end
+	
+	return res,nl,fwidth
+end
+
+
+--adds stuff like alignment and margins if missing
+
+local function fixData(data,class,id,env)
+	if (data.inline==nil) data.inline=unpod(pod(data)) --clone
+	local inline=data.inline
+	local element=data.type
+	class=class or ""
+	defaults=defaults or {}
+	local push={}
+	--priority:
+	-- 1 data given in tag
+	-- 2 id
+	-- 3 class
+	-- 4 element
+	-- 5 pure defaults
+	-- 6 default element
+	
+	push={ --pure defaults
+		align="left",
+		margin_left=0,
+		margin_right=0,
+		margin_top=0,
+		margin_bottom=0
+	}
+	if (env.__styling.defaultElement[element]) then
+		for k,v in pairs(env.__styling.defaultElement[element]) do
+			push[k]=v
+		end
+	end
+	if (env.__styling.element[element]) then
+		for k,v in pairs(env.__styling.element[element]) do
+			push[k]=v
+		end
+	end
+    --split into different classes
+    local classes=class:split(" ")
+    for i=1, #classes do
+    	if (classes[i]!="") then
+	    	if (env.__styling.class[classes[i]]) then
+	    		for k,v in pairs(env.__styling.class[classes[i]]) do
+	    			push[k]=v
+	    		end
+	    	end
+	    end
+	end
+    
+	if (env.__styling.id[id]) then
+		for k,v in pairs(env.__styling.id[id]) do
+			push[k]=v
+		end
+	end
+	
+	for k,v in pairs(inline) do
+		push[k]=v
+	end
+	
+	for k,v in pairs(push) do
+		data[k]=v
+	end
+	
+	return data
+end
+
+local function applyMargin(data,x,y)
+	return x+data.margin_left,y+data.margin_top
+end
+
+local function applyAlignment(align,x,y,width,height,pageData)
+	if (align=="center") x=pageData.width/2-width/2
+	if (align=="right") x=pageData.width-width
+	return x,y
+end
+
+local objectHandler={
+	text=function(data,builder,pageData,env,x,y)
+		data=fixData(data,data.class,data.id,env)
+		local pushbuild=true
+		x,y=builder.x,builder.y
+		local rawtext=data.rawtext or data.text
+		local font=data.font
+		local text,nl,width=wrapText(rawtext,pageData.width,font.width)
+		local height=nl*font.height
+		if (pushbuild) then
+			builder.y+=data.margin_top+height+data.margin_bottom
+		end
+		x,y=applyAlignment(data.align,x,y,width,height,pageData)
+		x,y=applyMargin(data,x,y)
+		
+		local el={
+			x=x,y=y,
+			width=width,height=height,
+			rawtext=rawtext,
+			text=text,
+			hover=false,
+			draw=function(self)
+				local prefix=""
+				loadFont(self.font)
+				local c=self.color
+				if (self.hover and self.hovercolor) then
+					c=self.hovercolor
+				end
+				print(prefix..self.text,self.x,self.y,c)
+				if (self.underline) then
+					if (not self.underlinecache) self.underlinecache=self.text:gsub("[^\n]","_")
+					print(prefix..self.underlinecache,self.x,self.y+2,c)
+					print(prefix..self.underlinecache,self.x,self.y+2,c)
+					print(prefix..self.underlinecache,self.x-1,self.y+2,c)
+				end
+			end
+		}
+		for k,v in pairs(data) do
+			if (el[k]==nil) then
+				el[k]=v
+			end
+		end
+		return el,builder
+	end,
+	header=function(data,builder,pageData,env,x,y)
+		data=fixData(data,data.class,data.id,env)
+		local pushbuild=true
+		x,y=builder.x,builder.y
+		local rawtext=data.rawtext or data.text or ""
+		local font=data.font
+		--*2 because title
+		local text,nl,width=wrapText(rawtext,pageData.width,font.width*2)
+		if (font==2) text=swapCase(text)
+		local height=nl*font.height*2
+		if (pushbuild) then
+			builder.y+=data.margin_top+height+data.margin_bottom
+		end
+		x,y=applyAlignment(data.align,x,y,width,height,pageData)
+		x,y=applyMargin(data,x,y)
+		local el={
+			x=x,y=y,
+			rawtext=data.text,
+			text=text,
+			width=width,height=height,
+			hover=false,
+			draw=function(self)
+				local prefix=""
+				loadFont(self.font)
+				local c=self.color
+				if (self.hover and self.hovercolor) then
+					c=self.hovercolor
+				end
+				prefix..="\^p"
+				print(prefix..self.text,self.x,self.y,c)
+				print(prefix..self.text,self.x,self.y+1,c)
+				print(prefix..self.text,self.x+1,self.y,c)
+				print(prefix..self.text,self.x+1,self.y+1,c)
+				if (self.underline) then
+					if (not self.underlinecache) self.underlinecache=self.text:gsub("[^\n]","_")
+					print(prefix..self.underlinecache,self.x,self.y+4,c)
+					print(prefix..self.underlinecache,self.x-1,self.y+4,c)
+					print(prefix..self.underlinecache,self.x-2,self.y+4,c)
+					print(prefix..self.underlinecache,self.x-3,self.y+4,c)
+				end
+			end
+		}
+		for k,v in pairs(data) do
+			if (el[k]==nil) then
+				el[k]=v
+			end
+		end
+		
+		return el,builder
+	end,
+	link=function(data,builder,pageData,env,x,y)
+		data=fixData(data,data.class,data.id,env)
+		local pushbuild=true
+		x,y=builder.x,builder.y
+		local rawtext=data.rawtext or data.text or ""
+		local font=data.font
+		local text,nl,width=wrapText(rawtext,pageData.width,fonts[font].width)
+		local height=nl*fonts[font].height
+		if (pushbuild) then
+			builder.y+=data.margin_top+height+data.margin_bottom
+		end
+		x,y=applyAlignment(data.align,x,y,width,height,pageData)
+		x,y=applyMargin(data,x,y)
+		local leftmouseclick=[[file.openPage(self.target,self.where)]]
+		if (data.method=="download") then
+			leftmouseclick=[[file.download(self.target)]]
+		end
+		local el={
+			x=x,y=y,
+			width=width,height=height,
+			rawtext=rawtext,
+			text=text,
+			hover=false,
+			draw=function(self)
+				local c=self.color
+				if (self.hover and self.hovercolor) then
+					c=self.hovercolor
+				end
+				print(self.text,self.x,self.y,c)
+				if (self.underline) then
+					if (not self.underlinecache) self.underlinecache=self.text:gsub("[^\n]","_")
+					print(self.underlinecache,self.x,self.y+2,c)
+					print(self.underlinecache,self.x-1,self.y+2,c)
+				end
+			end,
+			leftmouseclick=leftmouseclick,
+			middlemouseclick=[[file.openPage(self.target,"new")]]
+		}
+		for k,v in pairs(data) do
+			if (el[k]==nil) then
+				el[k]=v
+			end
+		end
+		
+		return el,builder
+	end,
+	gap=function(data,builder,pageData,env,x,y)
+		--input text
+		data=fixData(data,data.class,data.id,env)
+		local pushbuild=true
+		x,y=builder.x,builder.y
+		local height=data.height
+		if (pushbuild) then
+			builder.y+=data.margin_top+height+data.margin_bottom
+		end
+--		x,y=applyAlignment(data.align,x,y,width,height,pageData) why
+		x,y=applyMargin(data,x,y) --also why but more seen why
+		local el={
+			x=x,y=y,
+			width=0
+		}
+		for k,v in pairs(data) do
+			if (el[k]==nil) then
+				el[k]=v
+			end
+		end
+		return el,builder
+	end
+}
+
+--element method
+local function callElementMethod(el, method)
+	local fn=el[method]
+	if (not fn) return
+	
+	local env=page.env
+	
+	local ok, err
+	--has to be string functions to sandbox
+	if (type(fn)=="string") then
+		local success, compileErr=load("return function(self) "..fn.." end", "sandboxed", "t", env)
+		if (not success) then
+			webWarning("Sandbox failed to compile in "..method..": "..tostr(compileErr))
+			return
+		end
+		local func=success()
+		ok,err=pcall(func, el)
+	elseif (type(fn)=="function") then
+		ok, err = pcall(fn, el)
+	else
+		return
+	end
+	
+	if (not ok) then
+		webWarning("Sandbox runtime error in "..method..": "..tostr(err))
+	end
+end
+
+--rip page
+
+local fails={[[<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Not Found</title>
+    <link href="/style.css" rel="stylesheet" type="text/css" media="all">
+  </head>
+  <body>
+    <h1>Page Not Found</h1>
+    <p>The requested page was not found.</p>
+  </body>
+</html>]],[[<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+]]}
+
+local function format(line)
+	local obj={type="text",text=line}
+	
+	if (line=="") then
+		obj.type = "gap"
+		obj.text=nil
+		return obj --no more processing needed
+	end
+	
+	if (line:match("^    ")) then
+		obj.text=obj.text:sub(5)
+		obj.margin_left=15
+	end
+	
+	local m1,m2=line:match("^(#+)[ \t]*(.-)[ \t]*#*[ \t]*$")
+	if (m1) then
+		obj.type="header"
+		local level=m1:len()
+		obj.class="header"..level
+		obj.text=m2
+	end
+	
+	return obj
+end
+
+local function ripPage(url,self)
+	local raw=ffetch(url)
+	if (raw==nil) return nil
+	for i=1, #fails do
+		if (raw:sub(0,#fails[i])==fails[i]) return nil
+	end
+	self.rippedPage={}
+	local lines=split(raw,"\n")
+	
+	for i=1, #lines do
+		add(self.rippedPage,format(lines[i]))
+	end
+	return self.rippedPage
+end
+
+
+local function drawPage(page,ud)
+	local trg=get_draw_target()
+	set_draw_target(ud)
+	for i=1, #page do
+		if (not page[i].ignore) then
+			if (page[i].draw) page[i]:draw()
+		end
+	end
+	set_draw_target(trg)
+end
+
+local function append(obj,page,builder,pageData,env,self)
+	local funct=objectHandler[obj.type]
+	if (funct) then
+		local scriptingAttribs={
+			leftmousedown=true,
+			leftmouseclick=true,
+			leftmouseunpress=true,
+			rightmousedown=true,
+			rightmouseclick=true,
+			rightmouseunpress=true,
+			middlemousedown=true,
+			middlemouseclick=true,
+			middlemouseunpress=true,
+			wheelx=true,
+			wheely=true,
+			update=true,
+			draw=true,
+			__raw_update=true,
+			enter=true,
+			tab=true
+		}
+		local object,newBuilder=funct(obj,builder,pageData,env)
+		--set custom values
+		for key,val in pairs(obj) do
+			object[key]=object[key] or val
+		end
+		for key,val in pairs(object) do
+			if (scriptingAttribs[key]) then
+				if (type(val)=="string") then
+					local fn,err=load("return function(self) "..val.." end", key, "t", env)
+					if (fn) then
+						object[key]=fn()
+					else
+						webWarning("Failed to compile "..key..": "..tostr(err))
+						object[key]=nil
+					end
+				end
+			end
+		end
+		if (object.swapcase) then
+			object.text=swapCase(object.text)
+		end
+		add(page,object)
+		builder=newBuilder
+		return object,true,"success"
+	else
+		obj.ignore=true
+		add(page,obj)
+		return obj,false,"no object handler"
+	end
+end
+
+-- src being a url, filepath or a table
+local function buildPage(src,pageData,env,self)
+	buildingPage=true
+	local page={idLookup={}}
+	self.pageBuilder={
+		x=0,y=0
+	}
+	local meta={title=baseurl:basename()}
+	if (type(src)=="string") then
+		src=ripPage(src,self)
+	elseif (type(src)!="table") then
+		return false,"can't handle type: "..type(src)
+	end
+	if (src==nil) printh("src is nil, failed to load page") return false,"src is nil"
+	
+	for i=1, #src do
+		append(src[i],page,self.pageBuilder,self.pageData,env,self)
+		--clear underline cache (for resizing)
+		page[#page].underlinecache=nil
+	end
+	local height=self.pageBuilder.y
+	drawPage(page,userdata("u8",1,1)) --flush anything that updates here, e.g: underlinecache
+	buildingPage=false
+	return src,page,meta,height -- return decompiled form of page, built page, metadata & new height
+end
+
+local function updatePage(self,page,cursorData)
+	local x,y=cursorData.x,cursorData.y
+	--get object at x,y
+	local el
+	for i=#page,1,-1 do
+		if (not page[i].ignore) then
+			if (page[i].__raw_update) callElementMethod(page[i],"__raw_update")
+			if (page[i].update) callElementMethod(page[i],"update")
+			if (page[i]) then
+				if (#page>=i) then
+					if (page[i].x and page[i].y and page[i].width and page[i].height) then
+						if (page[i].x<=x and page[i].x+page[i].width>=x and page[i].y<=y and page[i].y+page[i].height>=y) then
+							el=page[i]
+						else
+							page[i].hover=false
+						end
+					end
+				end
+			end
+		end
+	end
+	if (el!=nil) then
+		el.hover=true
+		if (el.cursor) rawset(self.env,"__cursorSprite",el.cursor)
+		--clicking / mousedown
+		local mb,lb=cursorData.b,cursorData.lb
+		local lclick,rclick,mwclick=lb==0 and mb==1,lb==0 and mb==2,lb==0 and mb==4
+		local lunpress=(lb==1 or lb==3 or lb==5 or lb==7) and (lb==0 or lb==2 or lb==6 or lb==4)
+		local runpress=(lb==2 or lb==3 or lb==6 or lb==7) and (lb==0 or lb==1 or lb==5 or lb==4)
+		local munpress=(lb==4 or lb==5 or lb==6 or lb==7) and (lb==0 or lb==1 or lb==2 or lb==3)
+		if (mb==1 or mb==3 or mb==5 or mb==7) then
+			if (el.leftmousedown) callElementMethod(el,"leftmousedown")
+			if (lclick) then
+				if (el.leftmouseclick) callElementMethod(el,"leftmouseclick")
+			end
+			if (lunpress) then
+				if (el.leftmouseunpress) callElementMethod(el,"leftmouseunpress")
+			end
+		end
+		if (mb==2 or mb==3 or mb==6 or mb==7) then
+			if (el.rightmousedown) callElementMethod(el,"rightmousedown")
+			if (rclick) then
+				if (el.rightmouseclick) callElementMethod(el,"rightmouseclick")
+			end
+			if (runpress) then
+				if (el.rightmouseunpress) callElementMethod(el,"leftmouseunpress")
+			end
+		elseif (mb==4 or mb==6 or mb==7) then
+			if (el.middlemousedown) callElementMethod(el,"middlemousedown")
+			if (mwclick) then
+				if (el.middlemouseclick) callElementMethod(el,"middlemouseclick")
+			end
+			if (munpress) then
+				if (el.middlemouseunpress) callElementMethod(el,"middlemouseunpress")
+			end
+		end
+		--scrollwheel
+		local wheelx,wheely=cursorData.wheelx,cursorData.wheely
+		if (wheelx!=0 and el.wheelx) callElementMethod(el,"wheelx")
+		if (wheely!=0 and el.wheely) callElementMethod(el,"wheely")
+	end
+end
+
+local alwaysAllowedFunctions={
+	--debug
+	warn=webWarning,
+	webwarn=webWarning,
+	webWarn=webWarning,
+	webWarning=webWarning,
+	printh=sandboxedPrinth,
+	
+	--text input
+	key=key,
+	keyp=keyp,
+	peektext=peektext,
+	readtext=readtext,
+	
+	--controller input
+	btn=btn,
+	btnp=btnp,
+	
+	--graphical
+	
+	cls=cls,
+	color=color,
+	clip=clip,
+	circ=circ,
+	circfill=circfill,
+	camera=camera,
+	fillp=fillp,
+	flip=flip,
+	get_display=get_display,
+	get_draw_target=get_draw_target,
+	set_draw_target=set_draw_target,
+	line=line,
+	oval=oval,
+	ovalfill=ovalfill,
+	rect=rect,
+	rectfill=rectfill,
+	tline=tline,
+	tline3d=tline3d,
+	pset=pset,
+	pget=pget,
+	print=print,
+	pal=pal,
+	palt=palt,
+	
+	--variables
+	
+	select=select,
+	USERDATA=USERDATA,
+	add=add,
+	count=count,
+	del=del,
+	deli=deli,
+	foreach=foreach,
+	ipairs=ipairs,
+	pairs=pairs,
+	get=get,
+	chr=chr,
+	tonum=tonum,
+	tonumber=tonumber,
+	tostr=tostr,
+	tostring=tostring,
+	ord=ord,
+	pack=pack,
+	set=set,
+	unpack=unpack,
+	unpod=unpod,
+	userdata=userdata,
+	utf8=utf8,
+	vec=vec,
+	table=table,
+	type=type,
+	pod=pod,
+	
+	--logic
+	abs=abs,
+	all=all,
+	atan2=atan2,
+	blit=blit,
+	ceil=ceil,
+	cos=cos,
+	flr=flr,
+	mid=mid,
+	min=min,
+	math=math,
+	max=max,
+	string=string,
+	sub=sub,
+	rnd=rnd,
+	sgn=sgn,
+	sin=sin,
+	split=split,
+	sqrt=sqrt,
+	srand=srand,
+	t=t,
+	time=time,
+	
+	--info
+	date=date,
+	stat=stat,
+	
+	--page backend
+	fetch=sandboxedFetch
+}
+
+local function loadPermissions(environment,allowed)
+	for i=1, #allowed do
+		if (permittedFunctions[allowed[i]]) then
+			for key,val in pairs(permittedFunctions[allowed[i]].functions) do
+				environment[key]=val
+			end
+		end
+	end
+	--always allowed
+	for key,val in pairs(alwaysAllowedFunctions) do
+		environment[key]=val
+	end
+	return environment
+end
+
+--sandbox
+
+local function buildEnvironment(permissions,data,pageData)
+	local scriptEnvironment={}
+	scriptEnvironment.__scroll={x=0,y=0}
+	scriptEnvironment.__cursorData={x=0,y=0,rawx=0,rawy=0,b=0,wheelx=0,wheely=0,lb=0}
+	scriptEnvironment.__lastCursorData={x=0,y=0,rawx=0,rawy=0,b=0,wheelx=0,wheely=0,lb=0}
+	scriptEnvironment.__invertScrollX=data.invertScrollX or false
+	scriptEnvironment.__invertScrollY=data.invertScrollY or false
+	scriptEnvironment.__scrollSpeed=data.scrollSpeed or 8
+	scriptEnvironment.__pageData=pageData
+	scriptEnvironment.__viewport={width=0,height=0}
+	scriptEnvironment.__styling={
+		system={
+			page={
+				background=data.background or 7
+			},
+		},
+		class={
+			header1={
+				font=fonts.picotron,
+				underline=true
+			},
+			header2={
+				font=fonts.widesquat,
+				underline=true
+			},
+			header3={
+				font=fonts.widesquat
+			},
+			header4={
+				font=fonts.minie,
+				underline=true
+			},
+			header5={
+				font=fonts.minie
+			},
+			header6={
+				font=fonts.minie,
+				color=5
+			}
+		},
+		id={},
+		element={},
+		defaultElement={
+			header={color=0,font=fonts.picotron,cursor=1,margin_left=3},
+			text={color=0,font=fonts.picotron,cursor=1,margin_left=3},
+			link={color=12,hovercolor=1,font=fonts.picotron,cursor="pointer",where="new",method="webpage",underline=true},
+			gap={height=11}
+		},
+	}
+	scriptEnvironment=loadPermissions(scriptEnvironment,{})
+	local code=[[
+		function __raw_update()
+			if (__invertScrollX) then
+				__scroll.x+=__cursorData.wheelx*__scrollSpeed
+			else
+				__scroll.x-=__cursorData.wheelx*__scrollSpeed
+			end
+			if (__invertScrollY) then
+				__scroll.y+=__cursorData.wheely*__scrollSpeed
+			else
+				__scroll.y-=__cursorData.wheely*__scrollSpeed
+			end
+			__scroll.x=mid(0,__scroll.x,max(0,__pageData.width-__viewport.width))
+			__scroll.y=mid(0,__scroll.y,max(0,__pageData.height-__viewport.height))
+			__scrollbarVisible=__pageData.height>__viewport.height
+		end
+	]]
+	local fn,err=load(code, "script", "t", scriptEnvironment)
+	if (not fn) then
+		webWarning("RAW Script compile error: "..tostr(err))
+	else
+		local ok,err2=pcall(fn)
+		if (not ok) then
+			webWarning("Script runtime error: "..tostr(err2))
+		else
+			
+		end
+	end
+	return scriptEnvironment
+end
+
+page.newTab=function(self,url,selff)
+	self.browserCommunication.newTab(url,selff)
+end
+
+page.download=function(self,data,filename)
+	self.browserCommunication.download(baseurl,data,filename)
+end
+
+page.setDisplay=function(self,width,height,generate)
+	if (generate==nil) generate=true
+	local lw,lh=self.width,self.height
+	self.width=width
+	self.height=height
+	self.pageData.width=width
+	if (generate and (self.width!=lw and self.height!=lh)) then
+		pageDirty=true
+	end
+end
+
+page.rip=function(self,url)
+	if (url:ext()==nil) url=url.."/"
+	if (url:sub(-1)=="/") then
+		url=url.."main.picoml"
+	end
+	local rip=ripPage(url,self)
+	local meta={}
+	baseurl=url
+	return rip,url
+end
+
+page.cleanRip=function(self,url)
+	local rip,url=page:rip(url)
+	if (rip==nil) return nil
+	return rip,{title=url:basename()},url
+end
+
+page.rebuild=function(self)
+	if (not self.hasinit) return
+	self.idLookup={}
+	if (not self.builtPage) then
+		self.builtPage=self.rippedPage
+	end
+	_,self.builtPage,self.meta,self.pageData.height=buildPage(self.builtPage,self.pageData,self.env,self)
+	self.browserCommunication.metadata(self.meta or {})
+	for i=1, #self.builtPage do
+		if (self.builtPage[i].init) self.builtPage[i]:init()
+	end
+end
+
+local sfetch=function() end
+
+page.init=function(self,data)
+	baseurl=data.url
+	local _
+	webWarning=data.webWarning or printh
+	self.env=buildEnvironment(data.permissions,data,self.pageData)
+	self.pageData={width=0,height=0}
+	self:setDisplay(data.width,data.height,false)
+	self.rippedPage=ripPage(data.url,self)
+	if (self.rippedPage==nil) return "404"
+	self.lastcurs={}
+	self.browserCommunication={}
+	self.browserCommunication.newTab=data.newTab
+	self.browserCommunication.metadata=data.metadata
+	self.browserCommunication.download=data.download
+	self.hasinit=true
+	self:rebuild()
+end
+
+page.update=function(self,data)
+	if (self.rippedPage==nil) return "404"
+	if (not self.hasinit) return {}
+	if (pageDirty) pageDirty=false self:rebuild()
+	local curs=data.mousedata
+	--ensure only affects if in page viewport
+	if (curs.x<0 or curs.y<0 or curs.x>self.width or curs.y>self.height) then
+		curs=self.env.__lastCursorData
+	else
+		curs.y+=self.env.__scroll.y
+	end
+	curs.lb=self.env.__lastCursorData.b
+	self.env.__lastCursorData=curs
+	rawset(self.env,"__cursorData",curs)
+	rawset(self.env,"__pageData",self.pageData)
+	rawset(self.env,"__viewport",{width=self.width,height=self.height})
+	updatePage(self,self.builtPage,curs)
+	sandboxedFunct("__raw_update",self.env,false)
+	return {
+		cursorSprite=self.env.__cursorSprite
+	}
+end
+
+page.draw=function(self,x,y)
+	if (self.hasinit==false or self.rippedPage==nil) return userdata("u8",1,1)
+	local scroll=self.env.__scroll
+	camera(scroll.x,scroll.y)
+	local w,h=self.width,self.height
+	local ud=userdata("u8",w,h)
+	set_draw_target(ud)
+	pal(0,32)
+	cls(self.env.__styling.system.page.background)
+	drawPage(self.builtPage,ud)
+	camera()
+	sandboxedFunct("_draw",self.env,false)
+	if (self.env.__scrollbarVisible) then
+		rectfill(w-5,th,w,h,13)
+		local y=min(h-5,((scroll.y)/(self.pageData.height-h))*(h-5))
+		rectfill(w-5,y,w,y+5,29)
+	end
+	set_draw_target()
+	pal(0,0)
+	palt(0,true)
+	loadFont(fonts.picotron) --reset font for cart
+	return ud
+end
+
+page.hasinit=false
+return page,"0.1"
+:: pageHandlers/picoml.lua
+--[[pod_format="raw",created="2025-11-28 15:29:10",modified="2025-12-06 22:30:27",revision=2093]]
+local ffetch=fetch --replaced in :init() - ensures locality
+local webWarning=printh --replaced in :init() - ensures locality
+local pageDirty=false
+local buildingPage=false
+
+local scripting=false
+
+local fonts={
+	{width=5,height=10}, --pt
+	{width=4,height=6}   --p8
+}
+
+local rootFolder="/appdata/picoml/"
+local localStorageFolder=rootFolder.."localStorage/"
+local sharedStorageFolder=rootFolder.."sharedStorage/"
+mkdir(rootFolder)
+mkdir(localStorageFolder)
+mkdir(sharedStorageFolder)
+local baseurl
+local page={}
+
+local function cleanURL(url)
+	local url,_=url:match("([^?]*)%??(.*)")
+	url=url:sub(#url:prot()+4,#url)
+	local rem="/main.picoml"
+	if (url:sub(#url-#rem+1,#url)==rem) then
+		url=url:sub(1,#url-#rem)
+	end
+	local sectors=url:split("/")
+	return sectors[1] or url
+end
+
+--hell
+local function rPath(path, base)
+	base=base or baseurl
+	local prot = ""
+	
+	if (path:prot()) return path
+	
+	local basePath,baseQuery=base:match("^([^?]*)%??(.*)$")
+	local pathPart,query=path:match("^([^?]*)%??(.*)$")
+	if path:match("^%?") then
+		return basePath..path
+	end
+	
+	local pathQuery=(query!="" and query) or nil
+	
+	if (basePath and basePath!="/") then
+		local baseProt = basePath:prot()
+		prot=baseProt and (baseProt.."://") or ""
+		if (baseProt) then
+			basePath=basePath:sub(#prot+1)
+		end
+		
+		local last=basePath:match("[^/]+$")
+		if (last) then
+			last=last:match("^[^?]+")
+			if (last:ext()) then
+				basePath=basePath:sub(1,#basePath-#last)
+			end
+		end
+		
+		if (basePath:sub(-1)!="/") then
+			basePath..="/"
+		end
+		if (not (path:match("^/"))) then
+			pathPart=basePath..pathPart
+		end
+	end
+	
+	local segments = {}
+	for part in pathPart:gmatch("[^/]+") do
+		if (part=="..") then
+			if (#segments>0) then
+				table.remove(segments)
+			end
+		elseif (part!="." and part!="") then
+			table.insert(segments,part)
+		end
+	end
+	
+	pathPart=table.concat(segments, "/")
+	
+	local lastSegment=pathPart:match("[^/]+$") or ""
+	local isFile=(lastSegment:ext()!=nil)
+	local finalQuery=pathQuery or (isFile and baseQuery)
+	if (finalQuery and finalQuery!="") then
+		pathPart..="?"..finalQuery
+	end
+	return prot..pathPart
+end
+
+--resolved fetch, supports ../ and stuff
+local function rFetch(path)
+	return ffetch(rPath(path,baseurl))
+end
+
+--styling
+local function attachStyling(style,env)
+	if (env.__attachedStyling[style]) return
+	env.__attachedStyling[style]=true
+	if (type(style)=="string") then
+		if (style:ext()=="style") then
+			local data=rFetch(style)
+			if (data) then
+				data=data:split("\n")
+				local obj=""
+				local typ=""
+				local properties={}
+				for i=1, #data do
+					local s=data[i]
+					--why is there a \n remnant?
+					--last index doesn't have remnant
+					if (i<#data) then
+						s=s:sub(1,-2)
+					end
+					if (s!="") then
+						local info=s:split("=")
+						if (#info==1) then
+							--name, opener, closer
+							if (s=="{") then
+								if (obj=="") then --blank == defaults
+									obj="page" --(alias)
+									typ="system"
+								end
+							elseif (s=="}") then
+								--closer, push to styling
+								if (env.__styling[typ][obj]==nil) env.__styling[typ][obj]={}
+								for k,v in pairs(properties) do
+									env.__styling[typ][obj][k]=v
+								end
+								properties={}
+								obj=""
+							elseif (#s>0) then --ensure not a blank line
+								local ss=s
+								typ="element"
+								if (s:sub(1,1)==".") then
+									typ="class"
+									ss=ss:sub(2)
+								elseif (s:sub(1,1)=="#") then
+									typ="id"
+									ss=ss:sub(2)
+								elseif (s:sub(1,2)=="__") then
+									typ="system"
+									ss=ss:sub(2)
+								end
+								obj=ss --set name
+							end
+						elseif (#info==2) then
+							--k,v
+							local k,v=info[1],info[2]
+							properties[k]=v
+						end
+					end
+				end
+			end
+			pageDirty=true
+		else
+			webWarning("Invalid Styling format. (.style file)")
+		end
+	else
+		webWarning("Invalid Styling format. (.style file)")
+	end
+end
+
+local cacheCanvas=""
+--canvas
+local function enterCanvas(canvas)
+	if (canvas.screen) then
+		if (cacheCanvas=="") cacheCanvas=get_draw_target()
+		set_draw_target(canvas.screen)
+	end
+end
+
+local function exitCanvas()
+	if (cacheCanvas!="") then
+		set_draw_target(cacheCanvas)
+		cacheCanvas=""
+	end
+end
+
+--query strings
+local function packQuery(str) --does not support nested tables
+	if (type(str)=="table") then
+		local res=""
+		for k,v in pairs(str) do
+			res..=packQuery(k).."="..packQuery(v).."&"
+		end
+		if (res:sub(-1)=="&") res=res:sub(1,#res-1)
+		return res
+	elseif (type(str)!="string") then
+		str=tostr(str) --is this the right thing to do?
+	end
+	return (str:gsub("([^A-Za-z0-9%-_%.~])", function(c)
+		return string.format("%%%02X", string.byte(c))
+	end))
+end
+
+local function unpackQuery(str)
+	local res={}
+	
+	for pair in string.gmatch(str,"([^&]+)") do
+		local key,val=pair:match("([^=]+)=?(.*)")
+		if (key and val) then
+			key=key:gsub("+"," "):gsub("%%(%x%x)", function(h)
+				return string.char(tonumber(h,16))
+			end)
+			val=val:gsub("+"," "):gsub("%%(%x%x)", function(h)
+				return string.char(tonumber(h,16))
+			end)
+			local num=tonumber(val)
+			if num then
+				res[key]=num
+			else
+				res[key]=val
+			end
+		end
+	end
+	
+	return res
+end
+
+--sandbox functs
+
+local function sandboxedFunct(funct,safe_env,nilerror)
+	if (nilerror==nil) nilerror=true
+	if safe_env and type(safe_env[funct]) == "function" then
+		local ok, err = pcall(safe_env[funct],safe_env)
+		if not ok then
+			webWarning(funct.."() error: " .. tostring(err))
+		end
+	elseif (nilerror) then
+		webWarning(funct.." not found")
+	end
+end
+
+--helper
+local function swapCase(txt)
+	txt=txt:gsub("%a", function(c)
+		if c:match("%l") then
+			return c:upper()
+		else
+			return c:lower()
+		end
+	end)
+	return txt
+end
+
+--hell
+local function textEntities(text)
+	text=text:gsub("&lt;","<")
+	text=text:gsub("&gt;",">")
+	text=text:gsub("&amp;","&")
+	text=text:gsub("&quot;",'"')
+	text=text:gsub("&apos;","'")
+	text=text:gsub("&nbsp;","")
+	return text
+end
+
+local function toImage(img,bg)
+	if (type(img)=="string") then
+		if (img:ext()=="png") then
+			img=rFetch(img)
+			if (type(img)=="userdata") then
+				local ud=userdata("u8",img:width(),img:height())
+				local trg=get_draw_target()
+				set_draw_target(ud)
+				cls(32)
+				spr(img,0,0)
+				set_draw_target(trg)
+				return ud
+			else
+				return nil
+			end
+		end
+		local up=unpod(img)
+		if (type(up)=="userdata") return up
+		img=rFetch(img)
+		if (type(img)=="userdata") then
+			return img
+		else
+			return nil
+		end
+	end
+	if (img==nil) return nil
+	return img
+end
+
+local function getMetadata(node)
+	local meta={}
+	--defaults
+	meta.title=""
+	meta.description=""
+	meta.author=""
+--	meta.tags={} setup future
+	for key,val in pairs(node) do
+		local v=val
+		if (key=="icon") then
+			v=toImage(v)
+			if (v) then
+				if (v:width()!=10 or v:height()!=10) then
+					local temp=userdata("u8",10,10)
+					set_draw_target(temp)
+					sspr(v,0,0,nil,nil,0,0,10,10)
+					set_draw_target()
+					v=temp
+				end
+			end
+		end
+		if (key!="type") then
+			meta[key]=v
+		end
+	end
+	return meta
+end
+
+local scripts={}
+
+local function initScripts()
+	for i=1, #scripts do
+		local ok,err=pcall(scripts[i].fn)
+		if (not ok) then
+			webWarning("Script runtime error: "..tostr(err))
+		else
+			sandboxedFunct("_init",scripts[i].env,false)
+		end
+	end
+	scripts={}
+end
+
+local function attachScript(src,env,self)
+	if (not scripting) return
+	if (env.__attachedScripts[src]) return
+	env.__attachedScripts[src]=true
+	local code=rFetch(src)
+	if (code==nil) then
+		webWarning("Code not found from "..src)
+		return
+	end
+	local fn,err=load(code, "script", "t", env)
+	if (not fn) then
+		webWarning("Script compile error: "..tostr(err))
+		return
+	end
+	
+	add(scripts,{fn=fn,env=env})
+end
+
+local function getElementById(id)
+	return page:getElementById(id)
+end
+
+local function getElementsByClassName(class)
+	return page:getElementsByClassName(class)
+end
+
+local function getDOM()
+	return page:getDOM()
+end
+
+local function moveElementAbove(moving,still)
+	if (type(moving)=="string") then
+		moving=page:getElementIndexById(moving)
+	else
+		moving=page:getElementIndexById(moving.id)
+	end
+	
+	if (type(still)=="string") then
+		still=page:getElementIndexById(still)
+	else
+		still=page:getElementIndexById(still.id)
+	end
+	return page:moveElementAbove(moving,still)
+end
+
+local function moveElementBelow(moving,still)
+	if (type(moving)=="string") then
+		moving=page:getElementIndexById(moving)
+	else
+		moving=page:getElementIndexById(moving.id)
+	end
+	
+	if (type(still)=="string") then
+		still=page:getElementIndexById(still)
+	else
+		still=page:getElementIndexById(still.id)
+	end
+	return page:moveElementBelow(moving,still)
+end
+
+local function destroyElement(obj)
+	if (type(obj)=="string") then
+		obj=page:getRawElementById(obj)
+	else
+		obj=page:getRawElementById(obj.id)
+	end
+	del(page.builtPage,obj)
+end
+
+local function editableElement(el)
+	local wrapper={} --read 
+	wrapper._el=el
+	
+	wrapper.set=function(_,key,val)
+		pageDirty=true
+		if (key=="text") then
+			rawset(el,"rawtext",val)
+			rawset(el,"underlinecache",nil)
+		elseif (key=="id") then
+			if (el.id) then
+				page.idLookup[el.id]=nil
+			end
+			page.idLookup[val]=el
+		end
+		el[key]=val
+	end
+	
+	wrapper.resize=function(_,width,height)
+		el.width,el.height=width,height
+		page:rebuild()
+	end
+	
+	setmetatable(wrapper, {
+		__index = function(t, k)
+			if k == "set" then
+				return rawget(t, "set")
+			end
+			if k == "resize" then
+				return rawget(t, "resize")
+			end
+			return el[k] -- forward reads to the actual element
+		end,
+		__newindex = function(t, k, v)
+			webWarning("Attempt to modify element directly. Use el:set(key, value)")
+		end,
+		__metatable = false -- prevent changing metatable
+	})
+	
+	return wrapper
+end
+
+local function pushElement(obj,data)
+	local obj,success,msg=page:pushElement(obj,data)
+	return editableElement(obj),success,msg
+end
+
+local function pushElementAbove(obj,obj2,data)
+	local obj,success,msg=page:pushElementAbove(obj,obj2,data)
+	return editableElement(obj),success,msg
+end
+
+local function pushElementBelow(obj,obj2,data)
+	local obj,success,msg=page:pushElementBelow(obj,obj2,data)
+	return editableElement(obj),success,msg
+end
+
+local function setStyle(label,properties,replace)
+    page:setStyle(label,properties,replace)
+end
+
+local function openTab(url,replaceIndex)
+	--handle a lack of protocol
+	if (sub(url,1,4)!="self" and url:prot()==nil) then
+		url="http://"..url
+	end
+	--handle self: protocol
+	local display=url
+	if (url:prot()=="self") then
+		url=url:sub(8,#url)
+		url="self/"..url
+	end
+	local path,query=url:match("([^?]*)%??(.*)")
+	
+	--redirect to main.picoml if nil
+	local last=path:match("[^/]+$") or ""
+	if (last:ext()==nil) then
+		if (path:sub(-1)!="/") path..="/"
+		path..="main.picoml"
+	end
+	
+	if (query!="") then
+		url=path.."?"..query
+	else
+		url=path
+	end
+	local selff=false
+	if (type(replaceIndex)=="string") then
+		if (replaceIndex=="self") selff=true
+	end
+	page:newTab(url,selff)
+end
+
+local function openRelativeTab(url,replaceIndex)
+	if (url:prot()==nil) then
+		url=rPath(url)
+	end
+	openTab(url,replaceIndex)
+end
+
+--page building
+
+local function wrapText(text,width,charWidth)
+	charWidth=charWidth or 5
+	local res=""
+	local cx=0
+	local nl=1
+	local fwidth=0
+	local i=1
+	
+	if (text==nil) return "",0,0
+	while true do
+		local nextnl=text:find("\n",i)
+		local segment=nextnl and text:sub(i,nextnl-1) or text:sub(i)
+		
+		for word in segment:gmatch("%S+") do
+			local wordWidth=#word*charWidth
+			local spaceWidth=(cx>0) and charWidth or 0
+			
+			if (wordWidth+spaceWidth>width) then
+				res..="\n"
+				cx=0
+				nl+=1
+				spaceWidth=0
+			end
+			
+			if cx>0 then
+				res..=" "
+				cx+=charWidth
+			end
+			
+			-- split long word if wider than line
+			local start=1
+			while (start<=#word) do
+				local remainingWidth=width-cx
+				local fitChars=flr(remainingWidth/charWidth)
+				if (fitChars<=0) then
+					res..="\n"
+					cx=0
+					nl+=1
+					fitChars=flr(width/charWidth)
+				end
+				
+				local part=word:sub(start,start+fitChars-1)
+				res..=part
+				cx+=#part*charWidth
+				if (cx>fwidth) fwidth=cx
+				start+=fitChars
+				if (start<=#word) then
+					res..="\n"
+					cx=0
+					nl+=1
+				end
+			end
+		end
+		if (not nextnl) break
+		res..="\n"
+		nl+=1
+		cx=0
+		i=nextnl+1
+	end
+	
+	return res,nl,fwidth
+end
+
+
+--adds stuff like alignment and margins if missing
+
+local function fixData(data,class,id,env)
+	if (data.inline==nil) data.inline=unpod(pod(data)) --clone
+	local inline=data.inline
+	local element=data.type
+	class=class or ""
+	defaults=defaults or {}
+	local push={}
+	--priority:
+	-- 1 data given in tag
+	-- 2 id
+	-- 3 class
+	-- 4 element
+	-- 5 pure defaults
+	-- 6 default element
+	
+	push={ --pure defaults
+		align="left",
+		margin_left=0,
+		margin_right=0,
+		margin_top=0,
+		margin_bottom=0
+	}
+	if (env.__styling.defaultElement[element]) then
+		for k,v in pairs(env.__styling.defaultElement[element]) do
+			push[k]=v
+		end
+	end
+	if (env.__styling.element[element]) then
+		for k,v in pairs(env.__styling.element[element]) do
+			push[k]=v
+		end
+	end
+    --split into different classes
+    local classes=class:split(" ")
+    for i=1, #classes do
+    	if (classes[i]!="") then
+	    	if (env.__styling.class[classes[i]]) then
+	    		for k,v in pairs(env.__styling.class[classes[i]]) do
+	    			push[k]=v
+	    		end
+	    	end
+	    end
+	end
+    
+	if (env.__styling.id[id]) then
+		for k,v in pairs(env.__styling.id[id]) do
+			push[k]=v
+		end
+	end
+	
+	for k,v in pairs(inline) do
+		push[k]=v
+	end
+	
+	for k,v in pairs(push) do
+		data[k]=v
+	end
+	
+	if (data.font) then
+		if (data.font!=1 and data.font!=2) data.font=1
+	end
+	
+	return data
+end
+
+local function applyMargin(data,x,y)
+	return x+data.margin_left,y+data.margin_top
+end
+
+local function applyAlignment(align,x,y,width,height,pageData)
+	if (align=="center") x=pageData.width/2-width/2
+	if (align=="right") x=pageData.width-width
+	return x,y
+end
+
+local objectHandler={
+	text=function(data,builder,pageData,env,x,y)
+		data=fixData(data,data.class,data.id,env)
+		local pushbuild=true
+		x,y=builder.x,builder.y
+		local rawtext=data.rawtext or data.text
+		local font=data.font
+		local text,nl,width=wrapText(rawtext,pageData.width,fonts[font].width)
+		if (font==2) text=swapCase(text)
+		local height=nl*fonts[font].height
+		if (pushbuild) then
+			builder.y+=data.margin_top+height+data.margin_bottom
+		end
+		x,y=applyAlignment(data.align,x,y,width,height,pageData)
+		x,y=applyMargin(data,x,y)
+		
+		local el={
+			x=x,y=y,
+			width=width,height=height,
+			rawtext=rawtext,
+			text=text,
+			hover=false,
+			draw=function(self)
+				local prefix=""
+				if (self.font==2) prefix="\014"
+				local c=self.color
+				if (self.hover and self.hovercolor) then
+					c=self.hovercolor
+				end
+				print(prefix..self.text,self.x,self.y,c)
+				if (self.underline) then
+					if (not self.underlinecache) self.underlinecache=self.text:gsub("[^\n]","_")
+					print(prefix..self.underlinecache,self.x,self.y+2,c)
+					print(prefix..self.underlinecache,self.x,self.y+2,c)
+					print(prefix..self.underlinecache,self.x-1,self.y+2,c)
+				end
+			end
+		}
+		for k,v in pairs(data) do
+			if (el[k]==nil) then
+				el[k]=v
+			end
+		end
+		return el,builder
+	end,
+	title=function(data,builder,pageData,env,x,y)
+		data=fixData(data,data.class,data.id,env)
+		local pushbuild=true
+		x,y=builder.x,builder.y
+		local rawtext=data.rawtext or data.text or ""
+		local font=data.font
+		--*2 because title
+		local text,nl,width=wrapText(rawtext,pageData.width,fonts[font].width*2)
+		if (font==2) text=swapCase(text)
+		local height=nl*fonts[font].height*2
+		if (pushbuild) then
+			builder.y+=data.margin_top+height+data.margin_bottom
+		end
+		x,y=applyAlignment(data.align,x,y,width,height,pageData)
+		x,y=applyMargin(data,x,y)
+		local el={
+			x=x,y=y,
+			rawtext=data.text,
+			text=text,
+			width=width,height=height,
+			hover=false,
+			draw=function(self)
+				local prefix="\^p"
+				if (font==2) prefix..="\014"
+				local c=self.color
+				if (self.hover and self.hovercolor) then
+					c=self.hovercolor
+				end
+				print(prefix..self.text,self.x,self.y,c)
+				print(prefix..self.text,self.x,self.y+1,c)
+				print(prefix..self.text,self.x+1,self.y,c)
+				print(prefix..self.text,self.x+1,self.y+1,c)
+				if (self.underline) then
+					if (not self.underlinecache) self.underlinecache=self.text:gsub("[^\n]","_")
+					print(prefix..self.underlinecache,self.x,self.y+4,c)
+					print(prefix..self.underlinecache,self.x-1,self.y+4,c)
+					print(prefix..self.underlinecache,self.x-2,self.y+4,c)
+					print(prefix..self.underlinecache,self.x-3,self.y+4,c)
+				end
+			end
+		}
+		for k,v in pairs(data) do
+			if (el[k]==nil) then
+				el[k]=v
+			end
+		end
+		
+		return el,builder
+	end,
+	link=function(data,builder,pageData,env,x,y)
+		data=fixData(data,data.class,data.id,env)
+		local pushbuild=true
+		x,y=builder.x,builder.y
+		local rawtext=data.rawtext or data.text or ""
+		local font=data.font
+		local text,nl,width=wrapText(rawtext,pageData.width,fonts[font].width)
+		local height=nl*fonts[font].height
+		if (pushbuild) then
+			builder.y+=data.margin_top+height+data.margin_bottom
+		end
+		x,y=applyAlignment(data.align,x,y,width,height,pageData)
+		x,y=applyMargin(data,x,y)
+		local leftmouseclick=[[file.openPage(self.target,self.where)]]
+		if (data.method=="download") then
+			leftmouseclick=[[file.download(self.target)]]
+		end
+		local el={
+			x=x,y=y,
+			width=width,height=height,
+			rawtext=rawtext,
+			text=text,
+			hover=false,
+			draw=function(self)
+				local c=self.color
+				if (self.hover and self.hovercolor) then
+					c=self.hovercolor
+				end
+				print(self.text,self.x,self.y,c)
+				if (self.underline) then
+					if (not self.underlinecache) self.underlinecache=self.text:gsub("[^\n]","_")
+					print(self.underlinecache,self.x,self.y+2,c)
+					print(self.underlinecache,self.x-1,self.y+2,c)
+				end
+			end,
+			leftmouseclick=leftmouseclick,
+			middlemouseclick=[[file.openPage(self.target,"new")]]
+		}
+		for k,v in pairs(data) do
+			if (el[k]==nil) then
+				el[k]=v
+			end
+		end
+		
+		return el,builder
+	end,
+	image=function(data,builder,pageData,env,x,y)
+		data=fixData(data,data.class,data.id,env)
+		
+		local pushbuild=true
+		x,y=builder.x,builder.y
+		local img=toImage(data.src,env.__styling.system.page.background)
+		if (img) then
+			local w=data.width or img:width()
+			local h=data.height or img:height()
+			
+			if (w=="auto") then
+				if (h!="auto") then
+					w=flr(img:width()*(h/img:height()))
+				else
+					w=img:width()
+				end
+				local maxWidth=pageData.width-data.margin_left-data.margin_right
+				if (w>maxWidth) then
+					local scale = maxWidth / w
+					w=flr(w * scale)
+				end
+			end
+			
+			if (h=="auto") then
+				if (w!="auto") then
+					h=flr(img:height()*(w/img:width()))
+				else
+					h=img:height()
+				end
+				local maxHeight=pageData.height-data.margin_top-data.margin_bottom
+				if (h>maxHeight) then
+					local scale=maxHeight/h
+					h=flr(h*scale)
+				end
+			end
+			
+			local timg = userdata("u8",w,h)
+			set_draw_target(timg)
+			cls(env.__styling.system.page.background)
+			sspr(img,0,0,nil,nil,0,0,w,h)
+			set_draw_target()
+			img=timg
+			
+			if (pushbuild) then
+				builder.y+=data.margin_top+img:height()+data.margin_bottom
+			end
+			x,y=applyMargin(data,x,y)
+			x,y=applyAlignment(data.align,x,y,img:width(),img:height(),pageData)
+			
+			local el={
+				x=x,y=y,
+				csrc=data.src,
+				src=data.src,
+				img=img,
+				width=img:width(),height=img:height(),
+				hover=false,
+				draw=function(self)
+					spr(self.img,self.x,self.y)
+				end
+			}
+			for k,v in pairs(data) do
+				if (el[k]==nil) then
+					el[k]=v
+				end
+			end
+			return el,builder
+		else
+			webWarning("Failed to load image from source "..tostr(data.src),1)
+			local el={
+				x=x,y=y,
+				width=0,0,
+				hover=false
+			}
+			for k,v in pairs(data) do
+				if (el[k]==nil) then
+					el[k]=v
+				end
+			end
+			
+			return el,builder
+		end
+	end,
+	script=function(data,builder,pageData,env,x,y)
+		--delete on init
+		return {
+			x=0,y=0,
+			width=0,height=0,
+			src=data.src,
+			init=function(self)
+				if (self.src) then
+					attachScript(self.src,env)
+				end
+				destroyElement(self)
+			end
+		},builder
+	end,
+	style=function(data,builder,pageData,env,x,y)
+		--delete on init
+		return {
+			x=0,y=0,
+			width=0,height=0,
+			src=data.src,
+			init=function(self)
+				if (self.src) then
+					attachStyling(self.src,env)
+				end
+				destroyElement(self)
+			end
+		},builder
+	end,
+	comment=function(data,builder,pageData,env,x,y)
+		--delete on init, no purpose except commenting code for developers
+		return {
+			x=0,y=0,
+			width=0,height=0,
+			init=function(self)
+				destroyElement(self)
+			end
+		},builder
+	end,
+	input=function(data,builder,pageData,env,x,y)
+		--input text
+		data=fixData(data,data.class,data.id,env)
+		local pushbuild=true
+		x,y=builder.x,builder.y
+		local text=data.rawtext or data.text or ""
+		local wwidth=#text*5
+		local height=data.height
+		local width=data.width or mid(30,wwidth,pageData.width-30)
+		if (pushbuild) then
+			builder.y+=data.margin_top+height+data.margin_bottom
+		end
+		x,y=applyAlignment(data.align,x,y,width,height,pageData)
+		x,y=applyMargin(data,x,y)
+		local el={
+			x=x,y=y,
+			width=width,
+			text=text,
+			hover=false,
+			selected=false,
+			draw=function(self)
+				local c=self.color
+				if (self.hover and self.hovercolor) then
+					c=self.hovercolor
+				end
+				rectfill(self.x,self.y,self.x+self.width-1,self.y+self.height-1,self.background)
+				local t=self.text
+				if (#t==0) then
+					if (not self.selected) print(self.placeholder,self.x+1,self.y+1,self.placeholder_color)
+				else
+					print(t,self.x+1,self.y+1,c)
+				end
+				if (self.selected) then
+					local xx=self.x+#t*5+1
+					local yy=self.y+1
+					rectfill(xx,yy,xx+4,yy+8,14)
+				end
+			end,
+			__raw_update=[[
+				if (self.selected) then
+					local inp=readtext()
+					if (keyp("enter") and self.enter) self:enter()
+					if (keyp("tab") and self.tab) self:tab()
+					if (keyp("backspace")) then
+						self.text=self.text:sub(1,-2)
+					end
+					if (inp) then
+						self.text..=inp
+					end
+				end
+				if (self.dynamic_width) then
+					local t=self.text
+					if (#t==0) t=self.placeholder or ""
+					self.width=mid(30,#t*5+7,__viewport.width-30)
+				end
+				--deselect if you click off
+				if (not self.hover and __cursorData.b==0x1) self.selected=false
+			]],
+			leftmouseclick=[[
+				self.selected=true
+			]]
+		}
+		for k,v in pairs(data) do
+			if (el[k]==nil) then
+				el[k]=v
+			end
+		end
+		
+		return el,builder
+	end,
+	gap=function(data,builder,pageData,env,x,y)
+		--input text
+		data=fixData(data,data.class,data.id,env)
+		local pushbuild=true
+		x,y=builder.x,builder.y
+		local height=data.height
+		if (pushbuild) then
+			builder.y+=data.margin_top+height+data.margin_bottom
+		end
+--		x,y=applyAlignment(data.align,x,y,width,height,pageData) why
+		x,y=applyMargin(data,x,y) --also why but more seen why
+		local el={
+			x=x,y=y,
+			width=0
+		}
+		for k,v in pairs(data) do
+			if (el[k]==nil) then
+				el[k]=v
+			end
+		end
+		return el,builder
+	end,
+	canvas=function(data,builder,pageData,env,x,y)
+		data=fixData(data,data.class,data.id,env)
+		local pushbuild=true
+		x,y=builder.x,builder.y
+		local width=data.width or 50
+		local height=data.height or 50
+		if (pushbuild) then
+			builder.y+=data.margin_top+height+data.margin_bottom
+		end
+		x,y=applyAlignment(data.align,x,y,width,height,pageData)
+		x,y=applyMargin(data,x,y)
+		local el={
+			x=x,y=y,
+			width=width,height=height,
+			hover=false,
+			__raw_update=function(self)
+				if (self.screen==nil or self.width!=self.screen:width() or self.height!=self.screen:height()) then
+					self.screen=userdata("u8",self.width,self.height)
+				end
+			end,
+			draw=function(self)
+				spr(self.screen,self.x,self.y)
+			end
+		}
+		for k,v in pairs(data) do
+			if (el[k]==nil) then
+				el[k]=v
+			end
+		end
+		
+		return el,builder
+	end,
+	
+	--deprecated elements, keeping for compatibility
+	p8text=function(data,builder,pageData,env,x,y) --deprec. 2.3
+		data=fixData(data,data.class,data.id,env)
+		local pushbuild=true
+		x,y=builder.x,builder.y
+		local rawtext=data.rawtext or data.text or ""
+		local text,nl,width=wrapText(swapCase(rawtext),pageData.width,4)
+		local height=nl*6
+		if (pushbuild) then
+			builder.y+=data.margin_top+height+data.margin_bottom
+		end
+		x,y=applyAlignment(data.align,x,y,width,height,pageData)
+		x,y=applyMargin(data,x,y)
+		local el={
+			x=x,y=y,
+			rawtext=rawtext,
+			text=text,
+			width=width,height=height,
+			hover=false,
+			draw=function(self)
+				local c=self.color
+				if (self.hover and self.hovercolor) then
+					c=self.hovercolor
+				end
+				print("\014"..self.text,self.x,self.y,c)
+				if (self.underline) then
+					if (not self.underlinecache) self.underlinecache=self.text:gsub("[^ \n]","_")
+					print("\014"..self.underlinecache,self.x,self.y+2,c)
+					print("\014"..self.underlinecache,self.x-1,self.y+2,c)
+				end
+			end
+		}
+		for k,v in pairs(data) do
+			if (el[k]==nil) then
+				el[k]=v
+			end
+		end
+		
+		return el,builder
+	end,
+}
+
+--element method
+local function callElementMethod(el, method)
+	local fn=el[method]
+	if (not fn) return
+	
+	local env=page.env
+	
+	local ok, err
+	--has to be string functions to sandbox
+	if (type(fn)=="string") then
+		local success, compileErr=load("return function(self) "..fn.." end", "sandboxed", "t", env)
+		if (not success) then
+			webWarning("Sandbox failed to compile in "..method..": "..tostr(compileErr))
+			return
+		end
+		local func=success()
+		ok,err=pcall(func, el)
+	elseif (type(fn)=="function") then
+		ok, err = pcall(fn, el)
+	else
+		return
+	end
+	
+	if (not ok) then
+		webWarning("Sandbox runtime error in "..method..": "..tostr(err))
+	end
+end
+
+--rip page
+
+local fails={[[<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Not Found</title>
+    <link href="/style.css" rel="stylesheet" type="text/css" media="all">
+  </head>
+  <body>
+    <h1>Page Not Found</h1>
+    <p>The requested page was not found.</p>
+  </body>
+</html>]],[[<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+]]}
+
+local function ripPage(url,self)
+	local raw=ffetch(url)
+	if (raw==nil) return nil
+	for i=1, #fails do
+		if (raw:sub(0,#fails[i])==fails[i]) return nil
+	end
+	self.rippedPage={}
+	for type, attrs, content in raw:gmatch("<([%a_][%w_]*)%s*([^>]*)>(.-)</%1>") do
+		local node = {
+			type=type,
+			text=textEntities(content)
+		}
+		if (node.text=="") node.text=nil
+		
+		-- quoted attributes
+		for key, quote, val in attrs:gmatch("(%w+)%s*=%s*(['\"])(.-)%2") do
+			node[key] = val
+		end
+		
+		-- unquoted attributes excl. spans
+		for key, val in attrs:gmatch("([%a_][%w_]*)%s*=%s*([^%s'\"]+)") do
+			if (not node[key]) then
+				if (val=="true") then
+					node[key]=true
+				elseif (val=="false") then
+					node[key]=false
+				elseif (tonum(val)!=nil) then
+					node[key]=tonum(val)
+				else
+					node[key]=val
+				end
+			end
+		end
+		add(self.rippedPage,node)
+	end
+	return self.rippedPage
+end
+
+
+local function drawPage(page,ud)
+	local trg=get_draw_target()
+	set_draw_target(ud)
+	for i=1, #page do
+		if (not page[i].ignore) then
+			if (page[i].draw) page[i]:draw()
+		end
+	end
+	set_draw_target(trg)
+end
+
+local function append(obj,page,builder,pageData,env,self)
+	local funct=objectHandler[obj.type]
+	if (obj.id) then
+		self.idLookup[obj.id]=#page+1
+	end
+	if (funct) then
+		local banned={}
+		local scriptingAttribs={
+			leftmousedown=true,
+			leftmouseclick=true,
+			leftmouseunpress=true,
+			rightmousedown=true,
+			rightmouseclick=true,
+			rightmouseunpress=true,
+			middlemousedown=true,
+			middlemouseclick=true,
+			middlemouseunpress=true,
+			wheelx=true,
+			wheely=true,
+			update=true,
+			draw=true,
+			__raw_update=true,
+			enter=true,
+			tab=true
+		}
+		if (not scripting) then
+			for k,_ in pairs(scriptingAttribs) do
+				banned[k]=true
+			end
+		end
+		local object,newBuilder=funct(obj,builder,pageData,env)
+		--set custom values
+		for key,val in pairs(obj) do
+			if (not banned[key]) then
+				object[key]=object[key] or val
+			end
+		end
+		for key,val in pairs(object) do
+			if (scriptingAttribs[key]) then
+				if (type(val)=="string") then
+					local fn,err=load("return function(self) "..val.." end", key, "t", env)
+					if (fn) then
+						object[key]=fn()
+					else
+						webWarning("Failed to compile "..key..": "..tostr(err))
+						object[key]=nil
+					end
+				end
+			end
+		end
+		add(page,object)
+		builder=newBuilder
+		return object,true,"success"
+	else
+		obj.ignore=true
+		add(page,obj)
+		return obj,false,"no object handler"
+	end
+end
+-- src being a url, filepath or a table
+local function buildPage(src,pageData,env,self)
+	buildingPage=true
+	local page={idLookup={}}
+	self.pageBuilder={
+		x=0,y=0
+	}
+	local meta={}
+	if (type(src)=="string") then
+		src=ripPage(src,self)
+	elseif (type(src)!="table") then
+		return false,"can't handle type: "..type(src)
+	end
+	if (src==nil) printh("src is nil, failed to load page") return false,"src is nil"
+	local meta=getMetadata({})
+	
+	for i=1, #src do
+		if (src[i].type=="metadata") then
+			meta=getMetadata(src[i])
+			append(src[i],page,self.pageBuilder,self.pageData,env,self)
+		else
+			append(src[i],page,self.pageBuilder,self.pageData,env,self)
+		end
+		--clear underline cache (for resizing)
+		page[#page].underlinecache=nil
+	end
+	local height=self.pageBuilder.y
+	drawPage(page,userdata("u8",1,1)) --flush anything that updates here, e.g: underlinecache
+	buildingPage=false
+	return src,page,meta,height -- return decompiled form of page, built page, metadata & new height
+end
+
+local function updatePage(self,page,cursorData)
+	local x,y=cursorData.x,cursorData.y
+	--get object at x,y
+	local el
+	for i=#page,1,-1 do
+		if (not page[i].ignore) then
+			if (page[i].__raw_update) callElementMethod(page[i],"__raw_update")
+			if (page[i].update) callElementMethod(page[i],"update")
+			if (page[i]) then
+				if (#page>=i) then
+					if (page[i].x and page[i].y and page[i].width and page[i].height) then
+						if (page[i].x<=x and page[i].x+page[i].width>=x and page[i].y<=y and page[i].y+page[i].height>=y) then
+							el=page[i]
+						else
+							page[i].hover=false
+						end
+					end
+				end
+			end
+		end
+	end
+	if (el!=nil) then
+		el.hover=true
+		if (el.cursor) rawset(self.env,"__cursorSprite",el.cursor)
+		--clicking / mousedown
+		local mb,lb=cursorData.b,cursorData.lb
+		local lclick,rclick,mwclick=lb==0 and mb==1,lb==0 and mb==2,lb==0 and mb==4
+		local lunpress=(lb==1 or lb==3 or lb==5 or lb==7) and (lb==0 or lb==2 or lb==6 or lb==4)
+		local runpress=(lb==2 or lb==3 or lb==6 or lb==7) and (lb==0 or lb==1 or lb==5 or lb==4)
+		local munpress=(lb==4 or lb==5 or lb==6 or lb==7) and (lb==0 or lb==1 or lb==2 or lb==3)
+		if (mb==1 or mb==3 or mb==5 or mb==7) then
+			if (el.leftmousedown) callElementMethod(el,"leftmousedown")
+			if (lclick) then
+				if (el.leftmouseclick) callElementMethod(el,"leftmouseclick")
+			end
+			if (lunpress) then
+				if (el.leftmouseunpress) callElementMethod(el,"leftmouseunpress")
+			end
+		end
+		if (mb==2 or mb==3 or mb==6 or mb==7) then
+			if (el.rightmousedown) callElementMethod(el,"rightmousedown")
+			if (rclick) then
+				if (el.rightmouseclick) callElementMethod(el,"rightmouseclick")
+			end
+			if (runpress) then
+				if (el.rightmouseunpress) callElementMethod(el,"leftmouseunpress")
+			end
+		elseif (mb==4 or mb==6 or mb==7) then
+			if (el.middlemousedown) callElementMethod(el,"middlemousedown")
+			if (mwclick) then
+				if (el.middlemouseclick) callElementMethod(el,"middlemouseclick")
+			end
+			if (munpress) then
+				if (el.middlemouseunpress) callElementMethod(el,"middlemouseunpress")
+			end
+		end
+		--scrollwheel
+		local wheelx,wheely=cursorData.wheelx,cursorData.wheely
+		if (wheelx!=0 and el.wheelx) callElementMethod(el,"wheelx")
+		if (wheely!=0 and el.wheely) callElementMethod(el,"wheely")
+	end
+end
+
+--sandbox functs
+local function sandboxedFetch(path)
+	return rFetch(path)
+end
+
+local function sandboxedPrinth(text)
+	text="WEBPAGE: "..tostr(text)
+	printh(text)
+end
+
+--data = either website.com/icon.png OR raw filedata
+--filename = blank if using website, must set for raw filedata
+local function pageDownload(data,filename)
+	if (data==nil) webWarning("No data attached to download") return false,"No data attached to download"
+	if (filename==nil) then
+		filename=data:basename()
+		data=rFetch(data)
+		if (data==nil) then
+			webWarning("Failed to download - download(data/filename,[filename])") return false,"Failed to download - download(data/filename,[filename])"
+		end
+	end
+	page:download(data,filename)
+	return true
+end
+
+local function urlToLocalStorage(url)
+	path=cleanURL(url)
+	path=path:gsub(":","_")
+	path..="/"
+	return path
+end
+
+local pageFunctions={
+	localStorage={
+		store=function(data,name)
+			if (name==nil) then
+				webWarning("localStorage.store(table,name)")
+				return false
+			end
+			if (type(data)!="table") then
+				webWarning("You can only store pods/tables")
+				return false
+			end
+			if (name:ext()==nil) then
+				name..=".pod"
+			elseif (name:ext()!="pod") then
+				name..=".pod"
+			end
+			
+			local path=localStorageFolder..urlToLocalStorage(baseurl)
+			mkdir(path)
+			store(path..name,data)
+			return true
+		end,
+		fetch=function(name)
+			if (name:ext()==nil) then
+				name..=".pod"
+			elseif (name:ext()!="pod") then
+				name..=".pod"
+			end
+			
+			local path=localStorageFolder..urlToLocalStorage(baseurl)
+			return fetch(path..name)
+		end
+	},
+	dom={
+		getElementById=getElementById,
+		getElementsByClassName=getElementsByClassName,
+		
+		get=get,
+		
+		destroyElement=destroyElement,
+		
+		pushElement=pushElement,
+		
+		pushElementBelow=pushElementBelow,
+		pushElementAbove=pushElementAbove,
+		
+		moveElementBelow=moveElementBelow,
+		moveElementAbove=moveElementAbove,
+		
+		setStyle=setStyle,
+		
+		canvas={
+			enter=function(element)
+				if (cacheCanvas=="") cacheCanvas=get_draw_target()
+				set_draw_target(element.screen)
+				palt(0,true)
+			end,
+			exit=function()
+				set_draw_target(cacheCanvas)
+				palt(0,false)
+				cacheCanvas=""
+			end
+		},
+	},
+	query={
+		pack=packQuery,
+		unpack=unpack
+	},
+	file={
+		openPage=openRelativeTab,
+		download=pageDownload,
+	},
+	attach={
+		scripts=attachScripts,
+		styling=attachStyling
+	}
+}
+
+local permittedFunctions={
+	sprites={
+		name="Sprites",
+		description="Read/write to the sprites",
+		risk=1,
+		functions={
+			set_spr=set_spr,
+			get_spr=get_spr,
+			fget=fget,
+			fset=fset,
+			spr=spr,
+			sspr=sspr,
+		}
+	},
+	map={
+		name="Map",
+		description="Read/write to the map",
+		risk=1,
+		functions={
+			map=map,
+			mget=mget,
+			mset=mset,
+		}
+	},
+	sound={
+		name="Sound",
+		description="Play sounds",
+		risk=1,
+		functions={
+			music=music,
+			note=note,
+			sfx=sfx
+		}
+	},
+	clipboard={
+		name="Clipboard",
+		description="Read/write to the clipboard",
+		risk=2,
+		functions={
+			get_clipboard=get_clipboard,
+			set_clipboard=set_clipboard,
+		}
+	},
+	unknownRisky={ --unknown security risks or what functions do
+		name="Unknown",
+		description="Unknown functions, can open security risks",
+		risk=5,
+		functions={
+			create_meta_key=create_meta_key,
+			getmetatable=getmetatable,
+			setmetatable=setmetatable,
+			rawequal=rawequal,
+			rawget=rawget,
+			rawlen=rawlen,
+			rawset=rawset,
+			tokenoid=tokenoid
+		}
+	},
+	risky={ --100% risky.
+		name="Miscellaneous risky",
+		description="Random miscellaneous risky functions",
+		risk=3,
+		functions={
+			load=load,
+			mouselock=mouselock
+		}
+	},
+	memory={ --100% risky.
+		name="Memory",
+		description="Ability to edit the memory of the process",
+		risk=5,
+		functions={
+			unmap=unmap,
+			map=map,
+			poke=poke,
+			peek=peek
+		}
+	},
+	gui={
+		name="GUIs",
+		description="Ability to create GUIs (buggy, not recommended)",
+		risk=1,
+		functions={
+			create_gui=create_gui
+		}
+	},
+	windows={ --access the browser window info & sending stuff, sketch.
+		name="Windows",
+		description="Ability to access the picotron environment",
+		risk=5,
+		functions={
+			on_event=on_event,
+			env=env,
+			pid=pid,
+			send_message=send_message
+		}
+	},
+	notifications={
+		name="Notifications",
+		description="Ability to create notifications",
+		risk=1,
+		functions={
+			notify=notify
+		}
+	},
+	networking={
+		name="Networking",
+		description="Sockets",
+		risk=3,
+		functions={
+			socket=socket
+		}
+	}
+}
+
+local alwaysAllowedFunctions={
+	--debug
+	warn=webWarning,
+	webwarn=webWarning,
+	webWarn=webWarning,
+	webWarning=webWarning,
+	printh=sandboxedPrinth,
+	
+	--text input
+	key=key,
+	keyp=keyp,
+	peektext=peektext,
+	readtext=readtext,
+	
+	--controller input
+	btn=btn,
+	btnp=btnp,
+	
+	--graphical
+	
+	cls=cls,
+	color=color,
+	clip=clip,
+	circ=circ,
+	circfill=circfill,
+	camera=camera,
+	fillp=fillp,
+	flip=flip,
+	get_display=get_display,
+	get_draw_target=get_draw_target,
+	set_draw_target=set_draw_target,
+	line=line,
+	oval=oval,
+	ovalfill=ovalfill,
+	rect=rect,
+	rectfill=rectfill,
+	tline=tline,
+	tline3d=tline3d,
+	pset=pset,
+	pget=pget,
+	print=print,
+	pal=pal,
+	palt=palt,
+	
+	--variables
+	
+	select=select,
+	USERDATA=USERDATA,
+	add=add,
+	count=count,
+	del=del,
+	deli=deli,
+	foreach=foreach,
+	ipairs=ipairs,
+	pairs=pairs,
+	get=get,
+	chr=chr,
+	tonum=tonum,
+	tonumber=tonumber,
+	tostr=tostr,
+	tostring=tostring,
+	ord=ord,
+	pack=pack,
+	set=set,
+	unpack=unpack,
+	unpod=unpod,
+	userdata=userdata,
+	utf8=utf8,
+	vec=vec,
+	table=table,
+	type=type,
+	pod=pod,
+	
+	--logic
+	abs=abs,
+	all=all,
+	atan2=atan2,
+	blit=blit,
+	ceil=ceil,
+	cos=cos,
+	flr=flr,
+	mid=mid,
+	min=min,
+	math=math,
+	max=max,
+	string=string,
+	sub=sub,
+	rnd=rnd,
+	sgn=sgn,
+	sin=sin,
+	split=split,
+	sqrt=sqrt,
+	srand=srand,
+	t=t,
+	time=time,
+	
+	--info
+	date=date,
+	stat=stat,
+	
+	--page backend
+	fetch=sandboxedFetch
+}
+
+for k,v in pairs(pageFunctions) do
+	alwaysAllowedFunctions[k]=v
+end
+
+local function loadPermissions(environment,allowed)
+	for i=1, #allowed do
+		if (permittedFunctions[allowed[i]]) then
+			for key,val in pairs(permittedFunctions[allowed[i]].functions) do
+				environment[key]=val
+			end
+		end
+	end
+	--always allowed
+	for key,val in pairs(alwaysAllowedFunctions) do
+		environment[key]=val
+	end
+	return environment
+end
+
+--sandbox
+
+local function buildEnvironment(permissions,data,pageData)
+	local scriptEnvironment={}
+	scriptEnvironment.__scroll={x=0,y=0}
+	scriptEnvironment.__cursorData={x=0,y=0,rawx=0,rawy=0,b=0,wheelx=0,wheely=0,lb=0}
+	scriptEnvironment.__lastCursorData={x=0,y=0,rawx=0,rawy=0,b=0,wheelx=0,wheely=0,lb=0}
+	scriptEnvironment.__invertScrollX=data.invertScrollX or false
+	scriptEnvironment.__invertScrollY=data.invertScrollY or false
+	scriptEnvironment.__scrollSpeed=data.scrollSpeed or 8
+	scriptEnvironment.__pageData=pageData
+	scriptEnvironment.__viewport={width=0,height=0}
+	--push defaults here
+	scriptEnvironment.__styling={
+		system={
+			page={
+				background=data.background or 7
+			},
+		},
+		class={},
+		id={},
+		element={},
+		defaultElement={
+			title={margin_top=2,align="center",color=0,font=1,cursor=1},
+			text={color=0,font=1,cursor=1},
+			p8text={color=0,font=1,cursor=1},
+			link={color=12,hovercolor=1,font=1,cursor="pointer",where="new",method="webpage",underline=true},
+			input={color=7,background=1,dynamic_width=true,placeholder_color=6,cursor="edit",font=1,height=11},
+			gap={height=11},
+			canvas={}
+		},
+	}
+	scriptEnvironment.__attachedScripts={} --unlisted
+	scriptEnvironment.__attachedStyling={} --unlisted
+	--allowed defaults
+	scriptEnvironment=loadPermissions(scriptEnvironment,permissions)
+--	setmetatable(scriptEnvironment, {
+--		__newindex = function(_, key, value)
+--			if type(value) == "function" then
+--				rawset(scriptEnvironment, key, value) -- allow defining global functions
+--			else
+--				error("You cannot define new global variables: "..key)
+--			end
+--		end
+--	})
+	local code=[[
+		function __raw_update()
+			if (__invertScrollX) then
+				__scroll.x+=__cursorData.wheelx*__scrollSpeed
+			else
+				__scroll.x-=__cursorData.wheelx*__scrollSpeed
+			end
+			if (__invertScrollY) then
+				__scroll.y+=__cursorData.wheely*__scrollSpeed
+			else
+				__scroll.y-=__cursorData.wheely*__scrollSpeed
+			end
+			__scroll.x=mid(0,__scroll.x,max(0,__pageData.width-__viewport.width))
+			__scroll.y=mid(0,__scroll.y,max(0,__pageData.height-__viewport.height))
+			__scrollbarVisible=__pageData.height>__viewport.height
+		end
+	]]
+	local fn,err=load(code, "script", "t", scriptEnvironment)
+	if (not fn) then
+		webWarning("RAW Script compile error: "..tostr(err))
+	else
+		local ok,err2=pcall(fn)
+		if (not ok) then
+			webWarning("Script runtime error: "..tostr(err2))
+		else
+			
+		end
+	end
+	return scriptEnvironment
+end
+
+--code here
+
+--communicate with thyself
+page.getElementById = function(self, id)
+	local el = self.builtPage[self.idLookup[id]]
+	if (not el) return nil
+	
+	return editableElement(el)
+end
+
+page.getElementsByClassName = function(self,class)
+    local res={}
+    for i=1, #self.builtPage do
+        local classes=self.builtPage[i].class or ""
+        classes=classes:split(" ")
+        for j=1, #classes do
+            if (classes[j]==class) then
+                add(res,editableElement(self.builtPage[i]))
+            end
+        end
+    end
+	
+	return res
+end
+
+page.getDOM = function(self)
+	local res={}
+	for i=1, #self.builtPage do
+		add(res,editableElement(self.builtPage[i]))
+	end
+	return res
+end
+
+page.getElementIndexById = function(self, id)
+	local index=self.idLookup[id]
+	if (not index) return nil
+	
+	return index
+end
+
+page.getRawElementById = function(self, id)
+	local index=self:getElementIndexById(id)
+	if (not index) return nil,nil
+	local el = self.builtPage[index]
+	if (not el) return nil,index --what
+	
+	return el,index
+end
+
+page.moveElementAbove = function(self,moving,still)
+	local tbl={}
+	local index
+	if (moving and still) then
+		for i=1, #self.builtPage do
+		if (moving!=i) then
+			if (still==i) then
+				--push the moving element above
+				add(tbl,self.builtPage[moving])
+				index=#self.builtPage
+			end
+				add(tbl,self.builtPage[i])
+			end
+		end
+	end
+	self.builtPage=tbl
+	pageDirty=true
+	return index
+end
+
+page.moveElementBelow = function(self,moving,still)
+	local tbl={}
+	local index
+	if (moving and still) then
+		for i=1, #self.builtPage do
+			if (moving!=i) then
+				add(tbl,self.builtPage[i])
+				if (still==i) then
+					--push the moving element below
+					add(tbl,self.builtPage[moving])
+					index=#self.builtPage
+				end
+			end
+		end
+	end
+	self.builtPage=tbl
+	pageDirty=true
+	return index
+end
+
+page.pushElement=function(self,obj,data)
+	if (type(obj)=="string") then
+		obj={type=obj}
+	end
+	if (data) then
+		for k,v in pairs(data) do
+			obj[k]=v
+		end
+	end
+	local obj,success,msg=append(obj,self.builtPage,self.pageBuilder,self.pageData,self.env,self)
+	pageDirty=true
+	return obj,success,msg
+end
+
+page.pushElementAbove=function(self,obj,still,data)
+	local elm=self:pushElement(obj,data)
+	return editableElement(self:moveElementAbove(#self.builtPage,self:getElementIndexById(still)))
+end
+
+page.pushElementBelow=function(self,obj,still,data)
+	local elm=self:pushElement(obj,data)
+	return editableElement(self:moveElementBelow(#self.builtPage,self:getElementIndexById(still)))
+end
+
+page.setStyle=function(self,label,properties,replace)
+	if (replace==nil) replace=false
+	local typ="element"
+	local label=label or ""
+	if (label:sub(1,1)==".") then
+		typ="class"
+		label=label:sub(2)
+	elseif (label:sub(1,1)=="#") then
+		typ="id"
+		label=label:sub(2)
+	elseif (label:sub(1,2)=="__") then
+		typ="system"
+		label=label:sub(2)
+	elseif (label=="") then
+		typ="system"
+		label="page"
+	end
+	
+	if (replace) then
+		self.env.__styling[typ][label]=properties
+	else
+		for k,v in pairs(properties) do
+			self.env.__styling[typ][label][k]=v
+		end
+	end
+	pageDirty=true
+end
+
+page.newTab=function(self,url,selff)
+	self.browserCommunication.newTab(url,selff)
+end
+
+page.download=function(self,data,filename)
+	self.browserCommunication.download(baseurl,data,filename)
+end
+
+--[[
+:init(data) returns nil
+:update(mousedata) returns the cursor sprite
+:draw() returns the u8 of the page
+
+:env() --returns the environment of the page's scripts
+:setDisplay(width,height) --update the page's viewport
+
+pageData=page information - width, height, background
+rippedPage=ripped page contents as a table
+builtPage=page with the contents built (so that they have their functions and properties)
+]]--
+
+page.setDisplay=function(self,width,height,generate)
+	if (generate==nil) generate=true
+	local lw,lh=self.width,self.height
+	self.width=width
+	self.height=height
+	self.pageData.width=width
+	if (generate and (self.width!=lw and self.height!=lh)) then
+		pageDirty=true
+	end
+end
+
+page.rip=function(self,url)
+	if (url:ext()==nil) url=url.."/"
+	if (url:sub(-1)=="/") then
+		url=url.."main.picoml"
+	end
+	local rip=ripPage(url,self)
+	local meta={}
+	baseurl=url
+	return rip,url
+end
+
+page.cleanRip=function(self,url)
+	local rip,url=page:rip(url)
+	if (rip==nil) return nil
+	local start=url
+	if (start:ext()!=nil) then
+		start=start:sub(1,#start-#start:basename())
+	end
+	--clean form which localises src and target
+	for i=1, #rip do
+		if (rip[i].src) rip[i].src=rPath(rip[i].src,start)
+		if (rip[i].target) rip[i].target=rPath(rip[i].target,start)
+	end
+	return rip,meta,url
+end
+
+--cleanRip + metadata
+page.extensiveRip=function(self,url)
+	local rip,url=page:rip(url)
+	if (rip==nil) return nil
+	local start=url
+	if (start:ext()!=nil) then
+		start=start:sub(1,#start-#start:basename())
+	end
+	local meta={}
+	--clean form which localises src and target
+	for i=1, #rip do
+		if (rip[i].src) rip[i].src=rPath(rip[i].src,start)
+		if (rip[i].target) rip[i].target=rPath(rip[i].target,start)
+		--also get meta
+		if (rip[i].type=="metadata") then
+			meta=getMetadata(rip[i])
+		end
+	end
+	return rip,meta,url
+end
+
+page.rebuild=function(self)
+	if (not self.hasinit) return
+	self.idLookup={}
+	if (not self.builtPage) then
+		self.builtPage=self.rippedPage
+	end
+	_,self.builtPage,self.meta,self.pageData.height=buildPage(self.builtPage,self.pageData,self.env,self)
+	self.browserCommunication.metadata(self.meta or {})
+	for i=1, #self.builtPage do
+		if (self.builtPage[i].init) self.builtPage[i]:init()
+	end
+end
+
+local sfetch=function() end
+
+page.init=function(self,data)
+	baseurl=data.url
+	scripting=data.scripting
+	local _
+	webWarning=data.webWarning or printh
+	self.env=buildEnvironment(data.permissions,data,self.pageData)
+	rawset(self.env,"__url",baseurl)
+	local _,query=baseurl:match("^([^?]*)%??(.*)$")
+	rawset(self.env,"__query",query)
+	rawset(self.env,"__queries",unpackQuery(query))
+	self.pageData={width=0,height=0}
+	self:setDisplay(data.width,data.height,false)
+	sfetch=data.fetch or fetch
+	ffetch=function(v,a)
+		local data=sfetch(v,a)
+		if (v==nil) then
+			webWarning("Could not fetch "..v)
+		end
+		return data
+	end
+	self.rippedPage=ripPage(data.url,self)
+	if (self.rippedPage==nil) return "404"
+	self.lastcurs={}
+	self.browserCommunication={}
+	self.browserCommunication.newTab=data.newTab
+	self.browserCommunication.metadata=data.metadata
+	self.browserCommunication.download=data.download
+	self.hasinit=true
+	self:rebuild()
+	initScripts()
+end
+
+page.update=function(self,data)
+	if (self.rippedPage==nil) return "404"
+	if (not self.hasinit) return {}
+	initScripts()
+	if (pageDirty) pageDirty=false self:rebuild()
+	local curs=data.mousedata
+	--ensure only affects if in page viewport
+	if (curs.x<0 or curs.y<0 or curs.x>self.width or curs.y>self.height) then
+		curs=self.env.__lastCursorData
+	else
+		curs.y+=self.env.__scroll.y
+	end
+	curs.lb=self.env.__lastCursorData.b
+	self.env.__lastCursorData=curs
+	rawset(self.env,"__cursorData",curs)
+	rawset(self.env,"__pageData",self.pageData)
+	rawset(self.env,"__viewport",{width=self.width,height=self.height})
+	rawset(self.env,"__cursorSprite",1)
+	updatePage(self,self.builtPage,curs)
+	exitCanvas() --ensure canvas is exited
+	sandboxedFunct("__raw_update",self.env,false)
+	sandboxedFunct("_update",self.env,false)
+	return {
+		cursorSprite=self.env.__cursorSprite
+	}
+end
+
+page.draw=function(self,x,y)
+	if (self.hasinit==false or self.rippedPage==nil) return userdata("u8",1,1)
+	local scroll=self.env.__scroll
+	camera(scroll.x,scroll.y)
+	local w,h=self.width,self.height
+	local ud=userdata("u8",w,h)
+	set_draw_target(ud)
+	pal(0,32)
+	cls(self.env.__styling.system.page.background)
+	drawPage(self.builtPage,ud)
+	exitCanvas() --ensure canvas is exited
+	camera()
+	sandboxedFunct("_draw",self.env,false)
+	if (self.env.__scrollbarVisible) then
+		rectfill(w-5,th,w,h,13)
+		local y=min(h-5,((scroll.y)/(self.pageData.height-h))*(h-5))
+		rectfill(w-5,y,w,y+5,29)
+	end
+	set_draw_target()
+	pal(0,0)
+	palt(0,true)
+	return ud
+end
+
+page.hasinit=false
+return page,"2.3"
+:: pageHandlers/raw.lua
+--[[pod_format="raw",created="2025-11-28 20:55:39",modified="2025-12-07 00:30:00",revision=73]]
+local function wrapText(text,width,charWidth)
+	charWidth=charWidth or 5
+	local res=""
+	local cx=0
+	local nl=1
+	local fwidth=0
+	local i=1
+	
+	if (text==nil) return "",0,0
+	while true do
+		local nextnl=text:find("\n",i)
+		local segment=nextnl and text:sub(i,nextnl-1) or text:sub(i)
+		for word in segment:gmatch("%S+") do
+			local wordWidth=#word*charWidth
+			local spaceWidth=(cx>0) and charWidth or 0
+			
+			if (wordWidth+spaceWidth>width) then
+				res..="\n"
+				cx=0
+				nl+=1
+				spaceWidth=0
+			end
+			
+			if cx>0 then
+				res..=" "
+				cx+=charWidth
+			end
+			
+			-- split long word if wider than line
+			local start=1
+			while (start<=#word) do
+				local remainingWidth=width-cx
+				local fitChars=flr(remainingWidth/charWidth)
+				if (fitChars<=0) then
+					res..="\n"
+					cx=0
+					nl+=1
+					fitChars=flr(width/charWidth)
+				end
+				
+				local part=word:sub(start,start+fitChars-1)
+				res..=part
+				cx+=#part*charWidth
+				if (cx>fwidth) fwidth=cx
+				start+=fitChars
+				if (start<=#word) then
+					res..="\n"
+					cx=0
+					nl+=1
+				end
+			end
+		end
+		if (not nextnl) break
+		res..="\n"
+		nl+=1
+		cx=0
+		i=nextnl+1
+	end
+	
+	return res,nl,fwidth
+end
+
+local function buildPage(rip,pageData)
+	local res,nl=wrapText(rip,pageData.width,5)
+	pageData.height=nl*10
+	return res
+end
+
+local page={}
+
+page.setDisplay=function(self,width,height,generate)
+	if (generate==nil) generate=true
+	local lw,lh=self.width,self.height
+	self.width=width
+	self.height=height
+	self.pageData.width=width
+	self.pageData.height=0
+	if (generate and (self.width!=lw and self.height!=lh)) then
+		self.builtPage=buildPage(self.rippedPage,self.pageData)
+	end
+end
+
+page.init=function(self,data)
+	local _
+	self.pageData={width=0,height=0}
+	self:setDisplay(data.width,data.height,false)
+	ffetch=data.fetch
+	self.rippedPage=fetch(data.url)
+	self.builtPage=buildPage(self.rippedPage,self.pageData)
+	self.lastcurs={}
+	self.background=data.background or 7
+	self.col=data.color or 0
+	data.metadata({title=data.url:basename()})
+	self.scroll={x=0,y=0}
+	self.invertScrollX=data.invertScrollX or false
+	self.invertScrollY=data.invertScrollY or false
+	self.scrollSpeed=data.scrollSpeed or 8
+end
+
+page.update=function(self,data)
+	local curs=data.mousedata
+	--ensure only affects if in page viewport
+	if (not (curs.x<0 or curs.y<0 or curs.x>self.width or curs.y>self.height)) then
+		if (self.invertScrollX) then
+			self.scroll.x+=curs.wheelx*self.scrollSpeed
+		else
+			self.scroll.x-=curs.wheelx*self.scrollSpeed
+		end
+		if (self.invertScrollY) then
+			self.scroll.y+=curs.wheely*self.scrollSpeed
+		else
+			self.scroll.y-=curs.wheely*self.scrollSpeed
+		end
+		self.scroll.x=mid(0,self.scroll.x,max(0,self.pageData.width-self.width))
+		self.scroll.y=mid(0,self.scroll.y,max(0,self.pageData.height-self.height))
+		
+		self.scrollbarVisible=self.pageData.height>self.height
+	end
+	return {
+		cursorSprite=1
+	}
+end
+
+page.draw=function(self,x,y)
+	local scroll=self.scroll
+	camera(scroll.x,scroll.y)
+	local w,h=self.width,self.height
+	local ud=userdata("u8",w,h)
+	set_draw_target(ud)
+	pal(0,32)
+	cls(self.background)
+	print(self.builtPage,0,0,self.col)
+	camera()
+	if (self.scrollbarVisible) then
+		rectfill(w-5,th,w,h,13)
+		local y=min(h-5,((scroll.y)/(self.pageData.height-h))*(h-5))
+		rectfill(w-5,y,w,y+5,29)
+	end
+	set_draw_target()
+	pal(0,0)
+	palt(0,true)
+	return ud
+end
+
+return page
+:: popups/request.lua
+--[[pod_format="raw",created="2025-11-30 18:25:14",modified="2025-11-30 20:47:00",revision=56]]
+poke(0x4000, get(fetch"/system/fonts/lil_mono.font")) -- mono font
+
+local _env=env()
+local parent=_env.parent
+local text=_env.text
+local requestor=_env.requestor
+local accept=_env.accept
+local connector=_env.connector or "wants you to"
+local acceptTxt=_env.acceptTxt or "Accept"
+local denyTxt=_env.denyTxt or "Deny"
+if (parent==nil or text==nil or requestor==nil or accept==nil) notify("request popup failed.") exit()
+
+local w=#text*5
+if (#requestor*5>w) w=#requestor*5
+if (#connector*5>w) w=#connector*5
+w+=15
+window{
+	width=w,
+	height=45,
+	resizeable=false,
+	title=requestor
+}
+
+gui=create_gui{} --lazy, just using picotrons gui
+
+gui:attach{
+	x=w-#acceptTxt*5-6,y=32,
+	width=#acceptTxt*5+2,height=10,
+	cursor="pointer",
+	draw=function(self)
+		rectfill(0,0,self.width-1,self.height-1,3)
+		print(acceptTxt,1,1,7)
+	end,
+	tap=function()
+		send_message(parent,accept)
+		exit()
+	end
+}
+
+gui:attach{
+	x=5,y=32,
+	width=#denyTxt*5+2,height=10,
+	cursor="pointer",
+	draw=function(self)
+		rectfill(0,0,self.width-1,self.height-1,2)
+		print(denyTxt,1,1,7)
+	end,
+	tap=function()
+		exit()
+	end
+}
+
+function _update()
+	gui:update_all()
+end
+
+function cprint(text,y,c)
+	print(text,w/2-#text*2.5,y,c or 0)
+end
+
+function _draw()
+	cls(7)
+	cprint(requestor,2)
+	cprint("wants you to",12)
+	cprint(text,22)
+	gui:draw_all()
+end
+:: sandboxFunctions.lua
+--[[pod_format="raw",created="2025-11-16 03:38:17",modified="2025-12-03 18:55:10",revision=121]]
+local permissionPath="/appdata/netnexum/permissions/"
+mkdir(permissionPath)
+defaultPermissions=fetch(permissionPath.."default.pod") or {
+	"sprites",
+	"map",
+	"sound"
+}
+
+store(permissionPath.."default.pod",defaultPermissions)
+:: self/script/main.lua
+--[[pod_format="raw",created="2025-11-16 21:17:53",modified="2025-12-03 18:14:29",revision=47]]
+col=0
+stopnote=0
+
+function playNote()
+	local pitch=flr(rnd(24))+36
+	note(pitch,0,20,0,0,0)
+	stopnote=5
+end
+
+function _update()
+	stopnote-=1
+	if (stopnote==0) note()
+	col+=0.05
+	if (flr(col)==32) col=0
+	dom.getElementById("manipulate"):set("color",col)
+	dom.getElementById("cpu"):set("text","CPU Usage: "..flr(stat(1)*100*100)/100 .."%")
+	dom.getElementById("mouse"):set("text","Mouse X: "..__cursorData.x.." Y: "..__cursorData.y)
+end
+:: tabs.lua
+--[[pod_format="raw",created="2025-11-15 00:19:23",modified="2025-12-08 19:48:06",revision=774]]
+navbar=create_gui{}
+urlbox=navbar:attach_text_editor{
+	x=2,y=19,
+	fg=7,bg=2,
+	width=windowData.width-4,height=12,
+	update=function(self)
+		self.width=windowData.width-4
+	end,
+	key_callback={
+		enter=function()
+			openTab(urlbox:get_text()[1],tabs.selected,true)
+		end,
+		tab=function() end
+	}
+}
+
+tabs={}
+
+function openTab(url,replaceIndex)
+	if (type(replaceIndex)=="string") then
+		if (replaceIndex=="self") replaceIndex=tabs.selected
+		if (replaceIndex=="new") replaceIndex=nil
+	end
+	--handle a lack of protocol
+	if (sub(url,1,4)!="self" and url:prot()==nil) then
+		url="http://"..url
+	end
+	--handle self: protocol
+	local display=url
+	if (url:prot()=="self") then
+		url=url:sub(8,#url)
+		url="self/"..url
+	end
+	local path,query=url:match("([^?]*)%??(.*)")
+	
+	--redirect to main.picoml if nil
+	local last=path:match("[^/]+$") or ""
+--	printh("pre append: ")
+--	printh("url: "..url)
+--	printh("path: "..path)
+--	printh("query: "..query)
+	local _, c = path:gsub("/","")
+	if (last:ext()==nil or (path:prot()!=nil and c==2)) then
+		if (path:sub(-1)!="/") path..="/"
+		path..="main.picoml"
+	end
+	
+	if (query!="") then
+		url=path.."?"..query
+	else
+		url=path
+	end
+--	printh("post append: ")
+--	printh("url: "..url)
+	local index=#tabs+1
+	if (replaceIndex) index=replaceIndex
+	local page=include(getPageFormat(path))
+	local function newTab(url,self)
+		if (self) then
+			openTab(url,"self")
+		else
+			openTab(url)
+		end
+	end
+	if (replaceIndex) then
+		tabs[replaceIndex].page=page
+		tabs[replaceIndex].url=url
+		tabs[replaceIndex].displayurl=url
+		tabs[replaceIndex].meta={title="Unnamed Page"}
+	else
+		add(tabs,{page=page,meta={title="Unnamed Page"},displayurl=url,url=url})
+	end
+	local function metadata(data)
+		tabs[index].meta.title=data.title or tabs[index].meta.title
+		tabs[index].meta.icon=data.icon or tabs[index].meta.icon
+	end
+	local function download(website,source,filename)
+		trustedPIDs[create_process("popups/request.lua",
+		{
+			requestor=cleanLink(website),
+			text="Download "..filename,
+			parent=pid(),
+			accept={
+				event="download",
+				website=website,
+				source=source,
+				filename=filename
+			}
+		})]=true
+	end
+	tabs[index].page:init(
+	{
+		url=url,
+		scripting=options.pageScripts,
+		permissions=defaultPermissions,
+		fetch=ffetch,
+		invertScrollX=options.invertScrollX,
+		invertScrollY=options.invertScrollY,
+		webWarning=printh,
+		newTab=newTab,
+		metadata=metadata,
+		download=download,
+		width=windowData.width,
+		height=windowData.height-17-3-12
+	}
+	)
+	tabs[index].delay=5
+	saveOpenTabs()
+	selectTab(index)
+end
+
+function openRelativeTab(url,replaceIndex)
+	if (url:prot()==nil) then
+		url=rPath(url)
+	end
+	openTab(url,replaceIndex)
+end
+
+function closeTab(index)
+	if (tabs[index]) then
+		deli(tabs,index)
+		if (tabs.selected>=index) tabs.selected-=1
+		if (tabs.selected==0) tabs.selected=#tabs
+		if (#tabs!=0) selectTab(tabs.selected,true)
+	end
+	saveOpenTabs()
+	if (#tabs==0) then
+		--if export
+		if (stat(317)==3) send_message(2, {event="shutdown",proc_id=2})
+		exit()
+	end
+end
+
+function selectTab(index,reload)
+	if (tabs.selected==index) then
+		if (reload) then
+			openTab(tabs[index].url,index)
+		end
+	else
+		tabs.selected=index
+--		!!!!
+--		local decomp,meta=buildPage(tabs[index].url)
+--		if (decomp) then
+--			tabs[index].decomp,tabs[index].meta=buildPage(tabs[index].url)
+--		else
+--			openTab("self://404",index)
+--		end
+	end
+	tabs[index].page:setDisplay(windowData.width,windowData.height-17-3-12)
+	urlbox:set_text(tabs[index].displayurl)
+end
+
+function drawTabs()
+	local x,y=get_spr(64):width()+1,3
+	for i=1, #tabs do
+		if (i>#tabs) break
+		local n=tabs[i].meta.title
+		local w,h=#n*5+3,13
+		local bump=1 --bump width of tab
+		if (tabs[i].meta.icon) w+=10 
+		local dark=false
+		if (mouseover(x-1,y-1,w-1,h,false)) then
+			dark=true
+			window{cursor="pointer"}
+			if (curs.click) then
+				selectTab(i)
+			end
+		elseif (i==tabs.selected) then
+			dark=true
+		end
+		if (dark) then
+			rectfill(x,y,x+w-1,y+h,2)
+			spr(72,x-get_spr(72):width(),y-1)
+			local fspr=get_spr(73):width()
+			for j=1,flr(w/fspr)+bump do
+				spr(73,x+(j-1)*fspr,y-1)
+			end
+			spr(74,x+w,y-1)
+		else
+			rectfill(x,y,x+w-1,y+h,30)
+			spr(64,x-get_spr(64):width(),y-1)
+			local fspr=get_spr(65):width()
+			for j=1,flr(w/fspr)+bump do
+				spr(65,x+(j-1)*fspr,y-1)
+			end
+			spr(66,x+w,y-1)
+		end
+		x+=1
+		y+=2
+		if (tabs[i].meta.icon) then
+			spr(tabs[i].meta.icon,x,y+1)
+			x+=13
+			y+=2
+			print(n,x,y,7)
+			x+=#n*5
+		else
+			y+=2
+			print(n,x,y,7)
+			x+=#n*5+3
+		end
+		y=3
+		if (i!=#tabs) then
+			x+=3
+			liveObject(91,99,x,y+2,function() closeTab(i) end,"pointer")
+			x+=18
+		end
+	end
+	x+=2
+	if (mouseover(x+1,y+2,24,12,false)) then
+		liveObject(75,83,x+1,y+2,function() closeTab(#tabs) end,"pointer")
+		liveObject(76,84,x+13,y+2,function() openTab("self://newtab") end,"pointer")
+	else
+		liveObject(67,75,x+1,y+2,"pointer")
+		liveObject(68,76,x+13,y+2,"pointer")
+	end
+end
+
+function saveOpenTabs()
+	local otabs={}
+	for i=1, #tabs do
+		add(otabs,tabs[i].displayurl)
+	end
+	if (#tabs==0) otabs={"self://welcome"}
+	store("/appdata/netnexum/tabs.pod",otabs)
+end
+:: .info.pod
+--[[pod,author="Astralsparv",bbs_id="picoml_browser-16",created="2025-11-15 00:17:11",icon=userdata("u8",16,16,"00000000000000000000000000000000001e1e00001e1e1e1d1e1e1e00000000001e001e1d1e1e0d1d0d1e1d1d000000001e001e0d1e0d0d1d0d1e1d0d1d0000001e1d1e0d1e1e1e1d0d1e1d0d0d1d0000001d1d1d1d1d1d1d1d1d1d1d1d1d00001d0d0d1d0d0d0d1d0d0d0d1d0d0d1d001d0d0d1d0d0d0d1d0d0d0d1d0d0d1d001d1d1d1d1d1d1d1d1d1d1d1d1d1d1d001d0d0d1d0d0d0d1d0d0d0d1d0d0d1d001d0d0d1d0d0d0d1d0d0d0d1d0d0d1d00001d1d1e1e1d1d1e1e1e1d1e1d1e0000001d0d1e1d1e0d1e1e0d1d0d1e1d000000001d1e1d1e0d1e0d0d1d0d1e0000000000001e1d1e0d1e1e1e1d1e001e000000000000001d1d1d1d1d0000000000"),modified="2025-12-14 19:08:36",notes="Browser for PML\nSettings in /appdata/netnexum/\nRunning PML 2.3\nRunning Experimental MD Library",runtime=24,sandbox=false,title="Net Nexum",version="indev7.4",workspaces={{location="main.lua#124",workspace_index=1},{location="tabs.lua#42",workspace_index=1},{location="pageHandlers/markdown.lua#20",workspace_index=1},{location="pageHandlers/picoml.lua",workspace_index=1},{location="pageHandlers/raw.lua#9",workspace_index=1},{location="gfx/0.gfx",workspace_index=2}}]]
+:: LICENSE
+b64$TUlUIExpY2Vuc2UNCg0KQ29weXJpZ2h0IChjKSAyMDI1IEFzdHJhbHNwYXJ2DQoNClBlcm1p
+c3Npb24gaXMgaGVyZWJ5IGdyYW50ZWQsIGZyZWUgb2YgY2hhcmdlLCB0byBhbnkgcGVyc29uIG9i
+dGFpbmluZyBhIGNvcHkNCm9mIHRoaXMgc29mdHdhcmUgYW5kIGFzc29jaWF0ZWQgZG9jdW1lbnRh
+dGlvbiBmaWxlcyAodGhlICJTb2Z0d2FyZSIpLCB0byBkZWFsDQppbiB0aGUgU29mdHdhcmUgd2l0
+aG91dCByZXN0cmljdGlvbiwgaW5jbHVkaW5nIHdpdGhvdXQgbGltaXRhdGlvbiB0aGUgcmlnaHRz
+DQp0byB1c2UsIGNvcHksIG1vZGlmeSwgbWVyZ2UsIHB1Ymxpc2gsIGRpc3RyaWJ1dGUsIHN1Ymxp
+Y2Vuc2UsIGFuZC9vciBzZWxsDQpjb3BpZXMgb2YgdGhlIFNvZnR3YXJlLCBhbmQgdG8gcGVybWl0
+IHBlcnNvbnMgdG8gd2hvbSB0aGUgU29mdHdhcmUgaXMNCmZ1cm5pc2hlZCB0byBkbyBzbywgc3Vi
+amVjdCB0byB0aGUgZm9sbG93aW5nIGNvbmRpdGlvbnM6DQoNClRoZSBhYm92ZSBjb3B5cmlnaHQg
+bm90aWNlIGFuZCB0aGlzIHBlcm1pc3Npb24gbm90aWNlIHNoYWxsIGJlIGluY2x1ZGVkIGluIGFs
+bA0KY29waWVzIG9yIHN1YnN0YW50aWFsIHBvcnRpb25zIG9mIHRoZSBTb2Z0d2FyZS4NCg0KVEhF
+IFNPRlRXQVJFIElTIFBST1ZJREVEICJBUyBJUyIsIFdJVEhPVVQgV0FSUkFOVFkgT0YgQU5ZIEtJ
+TkQsIEVYUFJFU1MgT1INCklNUExJRUQsIElOQ0xVRElORyBCVVQgTk9UIExJTUlURUQgVE8gVEhF
+IFdBUlJBTlRJRVMgT0YgTUVSQ0hBTlRBQklMSVRZLA0KRklUTkVTUyBGT1IgQSBQQVJUSUNVTEFS
+IFBVUlBPU0UgQU5EIE5PTklORlJJTkdFTUVOVC4gSU4gTk8gRVZFTlQgU0hBTEwgVEhFDQpBVVRI
+T1JTIE9SIENPUFlSSUdIVCBIT0xERVJTIEJFIExJQUJMRSBGT1IgQU5ZIENMQUlNLCBEQU1BR0VT
+IE9SIE9USEVSDQpMSUFCSUxJVFksIFdIRVRIRVIgSU4gQU4gQUNUSU9OIE9GIENPTlRSQUNULCBU
+T1JUIE9SIE9USEVSV0lTRSwgQVJJU0lORyBGUk9NLA0KT1VUIE9GIE9SIElOIENPTk5FQ1RJT04g
+V0lUSCBUSEUgU09GVFdBUkUgT1IgVEhFIFVTRSBPUiBPVEhFUiBERUFMSU5HUyBJTiBUSEUNClNP
+RlRXQVJFLg==
+:: README.md
+b64$IyBwaWNvbWwucDY0CnBpY28gbWw=
+:: fonts/.info.pod
+--[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:08:36"]]
+:: fonts/0.font
+b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTEyLTA2IDIyOjUzOjAwIixpY29uPXVzZXJkYXRhKCJ1
+OCIsMTYsMTYsIjAwMDEwMTAxMDEwMTAxMDEwMTAxMDEwMDAwMDAwMDAwMDAwMTA3MDcwNzA3MDcw
+NzA3MDcwNjAxMDAwMDAwMDAwMDAxMDcwNzA3MDcwNzA3MDcwNzA2MDYwMTAwMDAwMDAwMDEwNzA3
+MDcwNzA3MDcwNzA3MDYwNjA2MDEwMDAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNjA2MDYwNjAxMDAw
+MDAxMDcwNzA3MDcwNzA3MDcwNzA3MDcwNzA3MDEwMDAwMDEwNzBkMGQwZDBkMGQwZDBkMGQwNzA3
+MDcwMTAwMDAwMTA3MGQwNzA3MGQwZDA3MDcwZDA3MDcwNzAxMDAwMDAxMDcwNzA3MDcwZDBkMDcw
+NzA3MDcwNzA3MDEwMDAwMDEwNzA3MDcwNzBkMGQwNzA3MDcwNzA3MDcwMTAwMDAwMTA3MDcwNzA3
+MGQwZDA3MDcwNzA3MDcwNzAxMDAwMDAxMDcwNzA3MDcwZDBkMDcwNzA3MDcwNzA3MDEwMDAwMDEw
+NzA3MDcwNzBkMGQwNzA3MDcwNzA3MDcwMTAwMDAwMTA3MDcwNzBkMGQwZDBkMDcwNzA3MDcwNzAx
+MDAwMDAxMDcwNzA3MDcwNzA3MDcwNzA3MDcwNzA3MDEwMDAwMDEwMTAxMDEwMTAxMDEwMTAxMDEw
+MTAxMDEwMTAwIiksbW9kaWZpZWQ9IjIwMjUtMTItMDYgMjI6NTM6MDAiLHJldmlzaW9uPTBdXWx6
+NAAWAAAAFAAAAPAFcHh1AAMoAAgAAATw----------c=
+:: gfx/.info.pod
+--[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:08:36"]]
+:: gfx/0.gfx
+b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTAxLTE3IDEwOjM1OjQ4Iixtb2RpZmllZD0iMjAyNS0x
+Mi0wNyAwMDoyNTozMiIscmV2aXNpb249MTk1XV1sejQAwAUAANxBAADwFHtbMF09e2JtcD1weHUA
+QyAKCgTwBBsACwAbADsACwALECsQDABgG8AjAANABADwEAMAAwAjkCxmbGFncz0wLHBhbl94PTQu
+MDExOTA0NzYGABE5FgBleT01LjI2FgDKNTQsem9vbT0xNX0scADTkAgACDAIAAgACFAIAAwARrBY
+MAgCAB_wbwA5-xxAHxVQHhMOIB4TDxsTDgAOQw0THnMuQz4HDhMeFw4ADgceFx4gDhceUB5AdwA5
+-xbgDxtQAxAOAAMgAyAOEAMAAzAOIAMAAxAOIAMgAwAOEANQDvAJcQA28gQQEATwE0OQExcAE4AD
+BzADgANABABxEyATkGPQIwIAOxPwI3EA8wItMC40MTMwOTUyMzgwOTMzM3MA8wA0LjUwMzU3MTQy
+ODU2NjdzAB0wcwAf8FAA2KpAQATw9jPwHDOwBQCvcDM3M-AUMzEzMAkACEuz8BSzBQCPcDNw8wxw
+M7AHAAGN8ABz_wxz8AQGADAAM-t3AAkFAO9wMzt-IPsMfjszMDM7fgkABo8_dz77BD53PgsAEz9_
+u34KABBf-gS7-gQIAAjvPxp_Nz67Pjd_PTMwMz0MAA6fcDN9frt_fTOwCAAEYPAAc7s_uwwBDwcA
+AFcM8wzwFAQAL-8D-QEpGTP8AfUBgT0E-xP-dlMeUz4zPjP_UwkAuxMeEz4TPhNeEx4TDQAfUwsA
+Ai8TfgsAAoReUz4zHjP_VQkAk9a-Gz69Pr0_PQIAT73_Fb0RACEePQIAby4X3hH_ABsAHQ9NAARg
+PgPeA-4BCQBivT59fn1_CgAPFQABb04DvgP_AhUAGw0CAG-es-4DPT4CAAAvztMyAAQyvvMAiwAN
+AgC5rhMvIHMsE-4APT4CAO9_fT49rgMMFxxTHBcMAx8ABj8sMywfAAc-XDNcGwAK-yBgAywHDDMM
+BywD-mETPDM8E-5iUxxT-mWT-gQ-Gr67Pnu_ez47Pjs_u357PrtOOxIAJCM7PgIACAoAH84YADcX
+uxYAb7s_O757jhQAKy87PgIABAiEAA8cADYDggADMAEBCAA-PrtOFgAuO-7-d3cEZDM1LjM4NsAH
+Ezd1BB82dQQBDtQH8BgBHx4QLg8dLkAOAA4NHg8NDQwOHTAOAA4MDhwNDA4NDA0gDg0ODC4MAPYA
+HA0gzRANHA0sDSwNHA0ACgAzrQktDgAUCRgA8AEcCQcJDA0QHR4dLgkHCQ4gQACwDgweCQ8ZBwsJ
+MA0NAGEODAkrCUAKAI8JGwcbCVAtaZ0HPNB8CeAJ0AkHCcAJBwmwewDvDgmgCS4JkAkeBx4JgGlb
+CD0PUAD---------------------OP8EBBAEAA8XHw4vFx8OHxcPHh8OHwQAHguPABMwfwASMHEA
+GThwAG8FEASe8DYyABnPBBAEHg8eAA5dAh0SAgAFD1AAGf8QDAwE-gjPHhI9Ej0iHSJNUm0yfTJt
+Uk0iHSI9Ej0S7UsAHJaeDx4Ajt0CPRICADENcg0EABc9AgAfnaMAGg7lAQ8xAG4AKAKPDh8eLh0O
+Eh2HATJfBRAEnx4KAh6vHx4CAA5SDxUSHQIABQ-AASEv-QAOAjTwBgAPF38ODx4ALxdfDi8eDw4f
+F38eAiMDJRI_AgAxDnIOBAAXPgIAH54fAh8PMQD-D-8SDAwEnx4CAI7yDR8VIh1CLQItUk1yLXJN
+Ui0CLUIdIh3iTQAc9QMADn8eAgAuXSINHnIPFR0SHDICADECfAIEABcyAgAvkhwPAR4P0wH-EjAP
+F49hA-ERHxdvDi8eHxePHgIPDhI-HhIOEg4iHiIOEh5SHhIuMi4EAAAMAAIWAABuAx8OZgP-Qw-E
+ASHQDo8eAgAebSIegg8VDT8D4RwCLBIsAhwSXBIcIjwiBAAADAACFgARAiIAD08DIA8xAP------
+--------------------------------0VBtPTh9fQ==
+:: label.qoi
+b64$cW9pZgAAAeAAAAEOBAH-_PDo-P39-f39-f39-f39-f39-eH_gHCYxAT9-f39-f3ALMAEwCzA
+BMcswQTALMEEyyzBBMgsxATG-vhwqMb__PDoySwELATNLMUE-f39-f38LMAEwizABMYswQTALMEE
+xizCBCzBBMgsBMIsBMb__HCoxv748OjKLATSLAQsBP39-f39-CzABMIswATGLMEEwCzBBMYswgQs
+wQTILATCLATG-vhwqMb__PDoxizHBMoswQQswQT9-f39-fwswATCLMAExizGBMYswgTMLATCLATG
+-vhwqMb__PDoxizABMMswATKLAQsBP39-f39-cIswATCLMAExiwELMIELATGLMUEySwEwCzBBNYs
+wATDLMAEyizFBP39-f39-CzABMIswATGLAQswgQsBMYsxQTHLMEEwCzBBMb__HCoxv748OjGLMAE
+wyzABMssxAT9-f39-f0swATALMAExyzGBMYsxQTHLMEEy-74cKjA-vjw6ML__HCowP748OjGLMcE
+-f39-f39-f39-f39-f394-4AAAD9-f39-f396v7gCKjAFMD__KjA-f39-f39-egUwQT9-f39-f39
+6hTABP39-eA0BMA0BMU0BMY0BMA0BP39-e4UwATE-mBAiMUE-f390zTABDQExTQExjTABDQE-f39
+5yzBBMIUwAT9-f3gNAQ0wATANMAEwDTCBMQ0BDTABMA0wATANATANAQ0BMA0BDTABDQE-f390iwE
+wSwEwRTABMQsxQT9-f3TNATANAQ0BMA0BMA0BMY0BMA0BDQEwDQENATANAQ0BMA0BDQENAQ0BP39
+-dEsBMEsBMEUwAT9-f3gNATANAQ0wgTANATGNATANAQ0wgTANMAEwDQEwDQENAQ0BDQE-f390SwE
+wSwEwRTABMQsxQT9-f3TNATANAQ0BMM0BMY0BMA0BDQEwjQEwDQENATANAQ0BME0BP39-dIswQTC
+FMAE-f394DQEwDQEwDTBBME0wATENATANATANMEENATANATANMEENATBNAT9-f3ZFMAE-f39-f39
+-eoUwAT9-f39-f396hT9-f39-f397gT9-f39-f396hTABP39-f39-f3qFMAEwP74cKg09-54IFD_
+_KjAz-74cKjoNP74qMD9-f39-e0UwAT__HCowTT1DMH__KjAz-74cKjmNMH__KjA-f39-f3sFMAE
+NP74cKgM_P5AKDD__KjAzP74cKj__KjAwDToDAT9-f39-ewUwAQ0wAz3LMAE-vhwqMc0-viowMH_
+_HCowDToDMAE1DT__KjA-f39-f3VFMAENMAM9yzABMD__HCoxTTB-viowMD__HCowDToDMAE0zTB
+-viowP39-f391BTABDTADMP_AIBQwQzG-vjw6MEMwgQMygQM0izA-viowMA0xwwEwP74cKjANMH_
+_PDoNMAENM8ENMYENMYMwDTVDP74qMD9-f39-dQUwAQ0wAzC-gCAUP748OjA-gCAUMAMxf748OgM
+wAQMzgQM0izA-vhwqAzANMIMwDQMwP74qMDA-vhwqMA0wf748OjANAQ0zwQ0xgQ0xgzANAzANMIM
+wDTFDMA0wgzA-viowP39-f391BTABDTADML_AIBQDMEEDMX__PDoDMAEDMAEwAzBBMEMwATADMAE
+DMMEwAzBBMEMwATADMEswDQMwTTADME0DMD__KjAwP74cKjANMH__PDoNATANMAEwDTABDTABDTE
+BMI0wATANMAEwTTEDMA0DME0wAzBNMUMwDTCDMD__KjA-f39-f3UFMAENMAMwv4AgFAMwATADMX_
+_PDowQzCBAzABAzCBAzABAwEDMIEDMAEDAQMwgQMwAQMwCzANMAMxDTADMD__KjAwP74cKjANMH_
+_PDoNMAENAQ0wAQ0BDTABDTFBDTEBDQENMAENMMMwDTADMQ0xgzANMIMwP74qMD9-f39-dQUwAQ0
+wAzD-gCAUMIMxf748OgMxAQMwAQMwgQMwAQMBAzCBAzABAwEDMIEDMAEDMAswDTBDMI0wQzA-vio
+wMD__HCowDTB-vjw6DTABDQEwjQENMAENMUENMIEwTQENMAENMMMwDTBDMI0xAzGNAzA-viowP39
+-f391BTABDTADMf_AIBQDMT__PDoDMQEDMAEDMIEDMAEDAQMwgQMwAQMBAzCBAzABAzALMA0wQzC
+NMEMwP74qMDA-vhwqMA0wf748Og0wAQ0BDTCBMI0xQQ0wQQ0wAQ0BDTABDTDDMA0wQzCNMQMxjQM
+wP74qMD9-f39-dQUwAQ0wAzH-gCAUMAMw-748OgMwwTBDMAEwQzABMAMwATCDMAEwAzBBMEMwATA
+DMEswDTADMQ0wAzA-viowMD__HCowDTB-vjw6DTABDTABME0BMI0xgTANMAEwTQEwTTEDMA0wAzE
+NMYMwDTCDMD__KjA-f39-f3UFMAENMAM9yzANAzBNMAMwTQMwATA-vhwqMA06AzANAzBNMAMwTTF
+DMA0wgzA-viowP39-f391BTABDTADPcswDQMwDTCDMA0DMAEwP74cKjANOgMwDQMwDTCDMA0xQzA
+NMIMwP74qMD9-f39-dQUwAQ0wAz3LMA0yAzABMD__HCowDToDMA01AzA-viowP39-f391BTANP39
+-f39-f3qFMA0-f39-f39-eoUwDTA-hgoUP39-f39-f3mNMD_AAAAwDTA-hgoUP39-f39-f3mNMD_
+AAAAwDTA-hgoUP39-f39-f3mNMD_AAAAwDTA-hgoUML_wMDA-hgoUMP_wMDA-hgoUML_wMDA-hgo
+UNf_wMDA-hgoUMH_wMDAwP4YKFDA-sDAwML_GChQxf7AwMDA-hgoUMb_wMDAwP4YKFDH-sDAwP4Y
+KFDF-sDAwML_GChQ-sDAwML_GChQwP7AwMDA-hgoUMH_wMDAwP4YKFDR-sDAwP4YKFDR-sDAwP4Y
+KFDQ-sDAwMD_GChQwf7AwMDA-hgoUMr_wMDA-hgoUML_wMDA-hgoUOz_wMDA-hgoUP39-fE0wP4A
+AADANMD_GChQwv7AwMD_GChQw-7AwMD_GChQwv7AwMD_GChQzf7AwMD_GChQwv7AwMD_GChQwf7A
+wMDA-hgoUMD_wMDA-hgoUMD_wMDA-hgoUML_wMDA-hgoUMT_wMDA-hgoUMD_wMDA-hgoUMT_wMDA
+-hgoUMD_wMDA-hgoUMX_wMDAwP4YKFDF-sDAwP4YKFDC-sDAwP4YKFDC-sDAwP4YKFDA-sDAwP4Y
+KFD_wMDA-hgoUMD_wMDA-hgoUMH_wMDA-hgoUPT_wMDA-hgoUMD_wMDA-hgoUMD_wMDA-hgoUMn_
+wMDA-hgoUML_wMDA-hgoUMj_wMDA-hgoUOD_wMDAwP4YKFD9-f3xNMD_AAAAwDTA-hgoUML_wMDA
+wf4YKFDA-sDAwML_GChQ-sDAwML_GChQ-sDAwMH_GChQx-7AwMD_GChQwv7AwMD_GChQwv7AwMD_
+GChQw-7AwMD_GChQwv7AwMD_GChQxP7AwMD_GChQ-sDAwMD_GChQxP7AwMD_GChQ-sDAwMD_GChQ
+xv7AwMD_GChQxf7AwMD_GChQwv7AwMD_GChQwv7AwMD_GChQ-sDAwMD_GChQ-sDAwP4YKFD_wMDA
+wP4YKFDB-sDAwP4YKFDA-sDAwML_GChQwP7AwMDA-hgoUMH_wMDAwP4YKFDA-sDAwMH_GChQxf7A
+wMDB-hgoUMH_wMDAwP4YKFDB-sDAwMH_GChQwP7AwMDA-hgoUMD_wMDAwv4YKFDB-sDAwP4YKFDD
+-sDAwP4YKFDA-sDAwMH_GChQxP7AwMDB-hgoUMD_wMDAwf4YKFDB-sDAwMH_GChQ-sDAwP4YKFD_
+wMDA-hgoUMH_wMDAwf4YKFDA-sDAwMH_GChQwP7AwMDA-hgoUMD_wMDA-hgoUP7AwMDA-hgoUMD_
+wMDAwP4YKFDH-sDAwP4YKFD9-f3xNMD_AAAAwDTA-hgoUML_wMDA-hgoUMD_wMDA-hgoUMD_wMDA
+-hgoUML_wMDA-hgoUMH_wMDA-hgoUMD_wMDA-hgoUMD_wMDA-hgoUML_wMDA-hgoUML_wMDA-hgo
+UMP_wMDA-hgoUML_wMDA-hgoUML_wMDA-hgoUMX_wMDAwP4YKFD_wMDA-hgoUMT_wMDAwP4YKFD_
+wMDA-hgoUMb_wMDA-hgoUMH_wMDA-hgoUMH_wMDAwf4YKFDA-sDAwMH_GChQwP7AwMDA-hgoUP7A
+wMD_GChQ-sDAwMD_GChQ-sDAwP4YKFDA-sDAwP4YKFDB-sDAwML_GChQwv7AwMD_GChQwf7AwMD_
+GChQwP7AwMD_GChQwP7AwMD_GChQxP7AwMD_GChQwP7AwMD_GChQwf7AwMD_GChQwP7AwMD_GChQ
+wv7AwMD_GChQwP7AwMD_GChQ-sDAwML_GChQwf7AwMD_GChQwv7AwMD_GChQwP7AwMD_GChQwP7A
+wMD_GChQ-sDAwML_GChQ-sDAwP4YKFDA-sDAwP4YKFD_wMDA-hgoUMD_wMDA-hgoUP7AwMD_GChQ
+w-7AwMD_GChQwf7AwMD_GChQwv7AwMD_GChQwv7AwMD_GChQwP7AwMD_GChQ-sDAwMD_GChQwf7A
+wMD_GChQwP7AwMD_GChQ-sDAwML_GChQwf7AwMD_GChQ-f398TTA-gAAAMA0wP4YKFDC-sDAwP4Y
+KFDA-sDAwP4YKFDA-sDAwP4YKFDC-sDAwP4YKFDB-sDAwP4YKFDA-sDAwP4YKFDF-sDAwP4YKFDC
+-sDAwP4YKFDD-sDAwP4YKFDB-sDAwP4YKFDC-sDAwP4YKFDG-sDAwP4YKFDA-sDAwP4YKFDE-sDA
+wP4YKFDA-sDAwP4YKFDG-sDAwP4YKFDI-sDAwP4YKFDC-sDAwP4YKFD_wMDA-hgoUMD_wMDA-hgo
+UP7AwMD_GChQwP7AwMD_GChQwP7AwMD_GChQwf7AwMD_GChQwP7AwMD_GChQwP7AwMDB-hgoUMH_
+wMDA-hgoUMD_wMDA-hgoUMD_wMDA-hgoUMT_wMDA-hgoUMD_wMDA-hgoUMH_wMDA-hgoUMD_wMDA
+-hgoUML_wMDA-hgoUMD_wMDA-hgoUP7AwMD_GChQwP7AwMD_GChQwf7AwMD_GChQwf7AwMD_GChQ
+wf7AwMD_GChQwP7AwMD_GChQxP7AwMD_GChQwP7AwMD_GChQ-sDAwP4YKFDA-sDAwP4YKFDA-sDA
+wMD_GChQwP7AwMDA-hgoUP7AwMD_GChQwP7AwMDA-hgoUMD_wMDA-hgoUML_wMDA-hgoUMD_wMDA
+-hgoUP7AwMD_GChQwv7AwMDC-hgoUMb_wMDA-hgoUP39-fE0wP4AAADANMD_GChQwv7AwMD_GChQ
+wP7AwMD_GChQwP7AwMD_GChQwv7AwMD_GChQwf7AwMDB-hgoUMH_wMDA-hgoUMH_wMDA-hgoUML_
+wMDA-hgoUMT_wMDA-hgoUMD_wMDA-hgoUMP_wMDA-hgoUMb_wMDA-hgoUMD_wMDA-hgoUMT_wMDA
+-hgoUMD_wMDA-hgoUMb_wMDA-hgoUMH_wMDA-hgoUMT_wMDA-hgoUML_wMDA-hgoUP7AwMD_GChQ
+wP7AwMD_GChQ-sDAwP4YKFDA-sDAwP4YKFD_wMDA-hgoUML_wMDA-hgoUMD_wMDA-hgoUP7AwMD_
+GChQwP7AwMD_GChQwf7AwMD_GChQwP7AwMD_GChQwP7AwMD_GChQxP7AwMDB-hgoUML_wMDA-hgo
+UMD_wMDA-hgoUML_wMDA-hgoUMD_wMDA-hgoUP7AwMD_GChQwP7AwMD_GChQwf7AwMD_GChQxv7A
+wMDB-hgoUP7AwMDC-hgoUP7AwMD_GChQwP7AwMD_GChQ-sDAwP4YKFDA-sDAwP4YKFDC-sDAwP4Y
+KFD_wMDA-hgoUP7AwMD_GChQw-7AwMD_GChQ-sDAwP4YKFDC-sDAwP4YKFDA-sDAwP4YKFD_wMDA
+-hgoUML_wMDA-hgoUML_wMDAwv4YKFDB-sDAwP4YKFD9-f3xNMD_AAAAwDTA-hgoUML_wMDA-hgo
+UMD_wMDA-hgoUMH_wMDAwP4YKFDB-sDAwMD_GChQ-sDAwP4YKFDH-sDAwP4YKFDC-sDAwP4YKFDD
+-sDAwMH_GChQ-sDAwML_GChQwP7AwMD_GChQwv7AwMD_GChQwv7AwMDA-hgoUMH_wMDA-hgoUML_
+wMDAwP4YKFDB-sDAwP4YKFDC-sDAwMH_GChQxP7AwMDB-hgoUMD_wMDAwf4YKFDB-sDAwMD_GChQ
+wf7AwMDA-hgoUMD_wMDA-hgoUML_wMDA-hgoUMD_wMDA-hgoUMD_wMDAwf4YKFDA-sDAwMH_GChQ
+-sDAwP4YKFDA-sDAwP4YKFDA-sDAwP4YKFDB-sDAwP4YKFDD-sDAwMH_GChQwP7AwMDB-hgoUMD_
+wMDAwP4YKFDA-sDAwP4YKFDA-sDAwP4YKFDB-sDAwMD_GChQwP7AwMD_GChQxP7AwMD_GChQxP7A
+wMDB-hgoUMD_wMDAwf4YKFDA-sDAwMH_GChQwf7AwMD_GChQ-sDAwP4YKFD_wMDAwf4YKFDB-sDA
+wMH_GChQwP7AwMDA-hgoUMD_wMDA-hgoUMP_wMDAwf4YKFDF-sDAwMH_GChQ-f398DTA-gAAAMA0
+wP4YKFDR-sDAwP4YKFD99-7AwMD_GChQ4-7AwMD_GChQ-f39-e40wP4AAADANMD_GChQ-f39-f39
+-eY0wP4AAADANP39-f39-f3qFMA0-f39-f39-eoUwP748Oj9-f39-f395f64mNjDFMAE-f39-f39
+-eUcwxTABP39-cwUxATGFMAE1hTABP39-escwxTABP39-cwUxATGFMAE1hTABP39-escwxTABP39
+-cwUwATCFMAE3hTABP39-escwxTABP39-cwUwATCFMAE3hTABP39-escwxTABP39-cwUwATCFMAE
+whTCBMQUxATCFMIEwhTABMgUwgTEFMQEwhTCBP39-cn_gHCYwxTABP39-cwUwATCFMAEwhTCBMQU
+xATCFMIEwhTABMgUwgTEFMQEwhTCBP39-ckswxTABP39-cwUxATGFMAEwhTABMYUwATCFMAEwBTA
+BMYUwATCFMAEwBTABMYUwATCFMAE-f39xyzDFMAE-f39zBTEBMYUwATCFMAExhTABMIUwATAFMAE
+xhTABMIUwATAFMAExhTABMIUwAT9-f3HLMMUwAT9-f3MFMAEyhTABMIUwATGFMAEwhTABMAUwATG
+FMAEwhTABMAUwATGFMAEwhTABP39-ccswxTABP39-cwUwATKFMAEwhTABMYUwATCFMAEwBTABMYU
+wATCFMAEwBTABMYUwATCFMAE-f39xyzDFMAE-f39zBTABMoUwATCFMAExhTABMIUwATAFMAExhTA
+BMIUwATAFMAExhTABMIUwAT9-f3HLMMUwAT9-f3MFMAEyhTABMIUwATGFMAEwhTABMAUwATGFMAE
+whTABMAUwATGFMAEwhTABP39-ccswxTABP39-cwUwATIFMQEwhTEBMIUwgTCFMYEwhTCBMQUxATC
+FMIE-f39ySzDFMAE-f39zBTABMgUxATCFMQEwhTCBMIUxgTCFMIExBTEBMIUwgT9-f3JLMMUwAT9
+-f39-f395SzDFMAE-f39-f39-eUswxTABP39-f39-f3lLMMUwAT9-f39-f395SzDFMAE-f39-f39
+-eUswxTABP39-f39-f3lLMMUwAT9-f3kFATZFAT9-f3gLMMUwAT9-f3jFATCFMAEFMAEwBQEwRTB
+BBTABMAUwQTBFAT9-f3fLMMUwAT9-f3jFATBFAQUBBQEFAQUBMIUBMAUBBQEFMAEwhQE-f393yzD
+FMAE-f394xQEwRQEFAQUBBQEFATCFATAFAQUBBQEwxQE-f393yzDFMAE-f395BQEwBTABMAUBBQE
+wBTABBTBBBQEFATAFMAEwBQE-f394CzDFMAE-f39-f39-eUswxTABP39-dMUBBQE2xTBBNgUBP39
+-dAswxTABP39-dMUBBQEwBTABBTBBBTBBMMUwQTAFMAEwxQEFATEFMAEwBTABMAUwAQUwQTAFMAE
+wBQE-f390CzDFMAE-f390xTBBBQEFAQUwQQUwATFFATAFAQUBMMUwQTDFAQUBBQEFAQUBMEUwATA
+FATCFAT9-f3QLMMUwAT9-f3TFAQUBBQEFAQUBBQEFATGFATAFAQUBMUUBMMUwQQUwQQUBBQEFATD
+FAT9-f3TLMMUwAT9-f3TFAQUBBTABMAUBBQEwBTABMQUBMAUwATGFATDFATBFAQUBBTBBMAUwAQU
+wATBFAT9-f3QLMMUwAT9-f39-f395SzDFMAEwP4YKFD9wwT9-f39-f3eLMP_AAAAwATA-hgoUNj_
+wMDA-hgoUOYE-f39-f393izD-gAAAMAEwP4YKFDY-sDAwP4YKFDmBP39-f39-d4sw-4AAADABMD_
+GChQwP7AwMDB-hgoUMD_wMDAwP4YKFDB-sDAwMD_GChQwP7AwMD_GChQ-sDAwMD_GChQwP7AwMDB
+-hgoUP7AwMDB-hgoUMb_wMDAwf4YKFD_wMDA-hgoUMD_wMDA-hgoUMD_wMDAwP4YKFDA-sDAwP4Y
+KFD_wMDAwP4YKFD_wMDA-hgoUMD_wMDA-hgoUMUE-f39-f393izD-gAAAMAEwP4YKFD_wMDA-hgo
+UML_wMDA-hgoUMD_wMDA-hgoUML_wMDA-hgoUP7AwMDA-hgoUMH_wMDA-hgoUML_wMDA-hgoUMD_
+wMDA-hgoUMT_wMDA-hgoUMD_wMDA-hgoUP7AwMD_GChQwP7AwMD_GChQ-sDAwP4YKFDA-sDAwP4Y
+KFD_wMDAwP4YKFDB-sDAwP4YKFDA-sDAwP4YKFDFBP39-f39-d4sw-4AAADABMD_GChQwP7AwMDA
+-hgoUMD_wMDAwv4YKFDA-sDAwMH_GChQ-sDAwP4YKFDC-sDAwP4YKFDC-sDAwP4YKFDA-sDAwP4Y
+KFDE-sDAwP4YKFDA-sDAwP4YKFD_wMDA-hgoUMD_wMDA-hgoUP7AwMDC-hgoUP7AwMD_GChQwv7A
+wMD_GChQwP7AwMD_GChQxQT9-f39-f3eLMP_AAAAwATA-hgoUML_wMDA-hgoUP7AwMD_GChQwv7A
+wMD_GChQwP7AwMD_GChQ-sDAwP4YKFDC-sDAwP4YKFDC-sDAwP4YKFDA-sDAwP4YKFDF-sDAwMH_
+GChQ-sDAwP4YKFDA-sDAwP4YKFD_wMDA-hgoUML_wMDA-hgoUMP_wMDAwf4YKFDFBP39-f39-d4s
+w-4AAADABMD_GChQ-sDAwMH_GChQwf7AwMDB-hgoUMD_wMDAwf4YKFD_wMDA-hgoUMP_wMDAwf4Y
+KFD_wMDA-hgoUMD_wMDA-hgoUMf_wMDA-hgoUMD_wMDAwf4YKFDA-sDAwMH_GChQ-sDAwP4YKFDF
+-sDAwP4YKFDFBP39-f39-d4sw-4AAADABMD_GChQ5f7AwMD_GChQz-7AwMDA-hgoUMYE-f39-f39
+3izD-gAAAMAEwP4YKFD9wwT9-f39-f3eLMP_AAAAwATA-hgoUP3DBP39-f39-d4sw-4AAADABP39
+-f39-f3lLMMUwAT9-f39-f395SzDFMAE-f3aFMIE6hTABMoUwATkFMIE6BTABMYUwAT9-eMswxTA
+BP392hTCBOoUwATKFMAE5BTCBOgUwATGFMAE-f3jLMMUwAT9-dgUwATCFMAE6BTABPAUwATsFMAE
+xhTABP394yzDFMAE-f3YFMAEwhTABOgUwATwFMAE7BTABMYUwAT9-eMswxTABP392BTABMgUwgTE
+FMIEwhTABMAUwgTCFMQEwBTEBMQUwgTCFMQExBTEBMwUwATGFMIEwhTABMAUwgTUFMQEwhTEBMQU
+xAT9-dMswxTABP392BTABMgUwgTEFMIEwhTABMAUwgTCFMQEwBTEBMQUwgTCFMQExBTEBMwUwATG
+FMIEwhTABMAUwgTUFMQEwhTEBMQUxAT9-dMswxTABP392hTCBMIUwATCFMAExhTABMAUwgTEFMAE
+xhTABMIUwATEFMAEwhTABMIUwATAFMAEwhTABMoUxgTAFMAEwhTABMAUwgTGFMAEzhTABMIUwATA
+FMAEwhTABMAUwAT9-dkswxTABP392hTCBMIUwATCFMAExhTABMAUwgTEFMAExhTABMIUwATEFMAE
+whTABMIUwATAFMAEwhTABMoUxgTAFMAEwhTABMAUwgTGFMAEzhTABMIUwATAFMAEwhTABMAUwAT9
+-dkswxTABP393hTABMAUxgTCFMQEwBTABMYUwATGFMAEwhTABMQUwATCFMAEwhTABMAUwATCFMAE
+zBTABMQUwATCFMAEwBTABNoUwATCFMAEwBTABMIUwATCFMIE-f3VLMMUwAT98-4YKFAE5v4AAADA
+BMAUxgTCFMQEwBTABMYUwATGFMAEwhTABMQUwATCFMAEwhTABMAUwATCFMAEzBTABMQUwATCFMAE
+wBTABNoUwATCFMAEwBTABMIUwATCFMIE-f3VLMMUwAT98v4YKFAEFATf-gAAAMAEwhTABMAUwATG
+FMAEwhTABMAUwATGFMAExhTABMIUwATEFMAEwhTABMIUwATCFMQEzBTABMQUwATCFMAEwBTABMgU
+wATOFMAEwhTABMAUwATCFMAExhTABP390yzDFMAE-fL_GChQBMAUBN7_AAAAwATCFMAEwBTABMYU
+wATCFMAEwBTABMYUwATGFMAEwhTABMQUwATCFMAEwhTABMIUxATMFMAExBTABMIUwATAFMAEyBTA
+BM4UwATCFMAEwBTABMIUwATGFMAE-f3TLMMUwAT98v4YKFAEwRQE3-4AAADCBMQUxATCFMQEwBTA
+BMgUxATAFMAEwhTABMIUxATAFMAEwhTABMYUwATMFMAExhTCBMIUwATaFMQEwhTEBMIUxAT9-dUs
+wxTABP3y-hgoUATCFATe-gAAAMIExBTEBMIUxATAFMAEyBTEBMAUwATCFMAEwhTEBMAUwATCFMAE
+xhTABMwUwATGFMIEwhTABNoUxATCFMQEwhTEBP391SzDFMAE-fL_GChQBMAUwAT98f4AAADCBP39
+-fEswxTABP3z-hgoUMAEFAT98f4AAADCBP39-fEswxTABP39-f39-f3lLMMUwAT9-f39-f395SzD
+FMAE-f39-f39-eUswxTABP39-f39-f3lLMMUwATAFMIE2RTABMEUBM0UwATRFAT9-f39-f3XLMMU
+wATAFATdFATBFATMFATTFAT9-f39-f3XLMMUwATAFATHFAQUwATAFMAEwRTBBBQEwBQEwRQEwBTC
+BMAUwQTFFATCFMAEwBQEwBQEFMEEwRTBBP39-f39-dcswxTABMAUwQTFFMAEwRQEwBQEFATCFATA
+FATBFATBFATBFATHFMIEFATAFAQUBMAUBBQEwBQEFATAFAT9-f39-f3XLMMUwATDFATEFATCFMIE
+wBTABMAUBMAUBMEUBMEUBMIUwATGFATBFATAFAQUBMAUBBQEwBQEFATAFAT9-f39-f3XLMMUwATD
+FATEFATCFATFFAQUBMAUBMEUBMEUBMQUBMUUBMEUBMAUBBQEwBQEFATAFAQUBMAUBP39-f39-dcs
+wxTABMAUwQTFFATDFMEEFMEEwRTBBMEUwATBFMAEFMEExhQEwhTABMEUwQQUBMAUBMAUwQT9-f39
+-f3XLMMUwAT9-f39-f395SzDFMAE-f39-f39-eUswxTABP39-f39-f3lLMMUwATA-iio_ATAHATP
+HATVHMEEwBzBBMEcwAT9-f39-f3nLMMUwATAHATAHATPHATVHATAHAQcBMAcBBwEwBwE-f39-f39
+5izDFMAEwBwEwBwEwBzABMAcBMAcBMAcwATAHMIEHAQcwATAHMAEwBzBBMUcBMAcBBwEwBwEHAT9
+-f39-f3pLMMUwATAHATAHAQcBMAcBBwEwBwEwhwEwBwEwRzABMEcBMAcBBwEwBwExBzBBMAcwQTB
+HMAE-f39-f395yzDFMAEwBwEwBwEHATAHATAHMAEwRzBBMAcBMEcBMIcBMAcBBwEwBwExBwEwBwE
+HATAHATCHAT9-f39-f3mLMMUwATAHAQcBMAcBMAcBBwEwBwEHATAHATAHATBHATCHATAHAQcBMAc
+BMQcBMAcBBwEwBwEHATAHAT9-f39-f3mLMMUwATAHMAEwhzABMAcBMAcBMAcwQTBHMAEHATDHMAE
+wBwEwBwExBzBBMAcwQTBHMAE-f39-f395yzDFMAE-f39-f39-eUswxTABBz6BP39-f39-eYswxTA
+BP39-f39-f3lLMMUwATA-lhQSMEE-f39-f39-eAswxTABMAkBCQEwCTABCTBBCTABMEkwAQkBMIk
+wATAJMAEwCTABCTABMAkBCQE-f39-f399izDFMAEwCTBBCQEwiQEwCQEJAQkBCQEJATBJATBJAQk
+BCQEJAQkBCQEJAQkBP39-f39-fYswxTABMAkBCQEwSQEwCQEwCTABMAkwQQkBMMkBCTBBCTBBCTA
+BMAkwQT9-f39-f32LMMUwATAJAQkBCTABMEkBMAkBCQEJAQkBMAkwAQkwATAJATBJAQkBCQEJATA
+JAT9-f39-f33LMMUwAT9-f39-f395SzDFMAEwCQEJATfJMEEJMEEwCTABP39-f39-fIswxTABMAk
+BCQEwCTABCQEJATAJMAEJMEEJMAEwSTABCTABMQkBCQEJAQkBCQE-f39-f399CzDFMAEwCQEJAQk
+BCQEwCQEwCQEJATAJATAJAQkBCQEJAQkBCQEwyTABMAkwATAJMEE-f39-f398izDFMAEwCTBBCQE
+JATAJATAJMEEwCQEwCTABMAkBCQEJAQkBMMkBCQEJAQkBMEkBP39-f39-fIswxTABMEkBMAkwATA
+JAQkBCQEJATAJATAJAQkBCTABMAkBCQEwyTBBCTBBCTABP39-f39-fMswxTABP39-f39-f3lLMMU
+wATaJATBJAT95yQEzSQE4SQE-f39-eIswxTABMAkBCQEJMEEJMEEwCTABMAkwATAJATBJATBJATB
+JMAEwCTABCTBBCTABMEkwAQkBMIkwATAJMAEwCTABCTABMAkBCQEwyTABMAkwQTAJMAEwCTABCTB
+BCTBBCTBBCTBBMAkwATEJMAEJMAEwSTABMAkBMAkwATAJMAEwSTABMAkBMAkBCQEwCTABCQEJATA
+JMAEJMEEJMAEwSTABCTABMEkBMAkwQTAJMAEJMEEJMAExSTABCTBBMAkwATAJMAEJMEEJAT9-f32
+LMMUwATAJAQkBMAkBMEkBMAkBCQEJATGJATBJATAJAQkBCQEwiQEwCQEJAQkBCQEJATBJATBJAQk
+BCQEJAQkBCQEJAQkBMMkBCQEJMAEwCQEJAQkBMIkBMEkBMEkBMAkwATAJATFJAQkBCQEJAQkBMIk
+BMAkwATAJMAEwCQEwiQEwCQEJAQkBCQEwCQEwCQEJATAJATAJAQkBCQEJAQkBCQEwCQEwCTBBCQE
+JATAJATAJAQkBMMkBCQEwCQEwCQEwSQEJAQkwQQkBP39-fYswxTABMAkwQTAJATBJATAJMEEwSQE
+wCQEwSQEwSQEwCTBBMEkBMAkBMAkwATAJMEEJATDJAQkwQQkwQQkwATAJMEEwyQEJAQkBMEkBCQE
+JATCJATBJATBJATAJATDJATDJAQkBCTABMAkBCQEwCQEwCQEJAQkBCQEwSQEwCQEwCTBBCQEJATA
+JATAJMEEwCQEwCTABMAkBCQEJAQkBMAkBMAkBCQEJMEEwCQEwCQEJATDJMEEwCQEwCQEwSQEJAQk
+BCQEJAT9-f32LMMUwATAJAQkBMAkBMEkBMAkBMEkwATEJATBJATBJAQkBCTABMEkBMAkBCQEJAQk
+BMAkwAQkwATAJATBJAQkBCQEJATAJATBJATAJAQkBMAkwAQkwATBJMAEJMEEwCQEwCTBBMAkwAQk
+wATBJATAJMAEwCQEJAQkwQQkBMEkwQQkwQQkwATAJATCJATAJMAEwCQEJAQkBCQEwCQEwCQEJAQk
+wATAJAQkBCQEwSQEJAQkBCQEJMEEJAQkBMAkBMAkBMEkwQTAJMAEJMAEwCQEJATAJMAE-f399CzD
+FMAE-f39-f39-eUswxTABNwkBMUkwQQkBCQEJMEE-f39-f398izDFMAEwSTABMAkwATAJMAEJMAE
+wCTBBMAkBMQkBMUkBCQEJAQkBCQEJAT9-f39-f3yLMMUwATAJATBJATBJAQkBCQEJAQkwATIJMEE
+wyQEJAQkwQQkwQT9-f39-f3yLMMUwATCJAQkBMEkBCQEJMAEwCQEwiQExCQEJATDJAQkBMEkBCQE
+JAT9-f39-f3yLMMUwATAJMAEwSTABCTABMAkBCQEwCTABMckwQTAJATAJMEEwSQEJMEE-f39-f39
+8izDFMAE-f39-f39-eUswxTABMAcwQTCHATLHATVHMEEwBzBBMEcwAT9-f39-f3nLMMUwATAHATA
+HATPHATVHATAHAQcBMAcBBwEwBwE-f39-f395izDFMAEwBwEwBwEwBzABMEcwQTAHMAEwBzCBBwE
+HMAEwBzABMAcwQTFHATAHAQcBMAcBBwE-f39-f396SzDFMAEwBzBBMIcBMAcBMIcBMAcBMAcBMEc
+wATBHATAHAQcBMAcBMQcwQTAHMEEwRzABP39-f39-ecswxTABMAcBMQcBMAcBMIcBMAcBMAcBMEc
+BMIcBMAcBBwEwBwExBwEwBwEHATAHATCHAT9-f39-f3mLMMUwATAHATEHATAHATCHATAHATAHATB
+HATCHATAHAQcBMAcBMQcBMAcBBwEwBwEHATAHAT9-f39-f3mLMMUwATAHATDHMEEwBzBBMAcwATC
+HMAEHATDHMAEwBwEwBwExBzBBMAcwQTBHMAE-f39-f395yzDFMAE-f39-f39-eUswxTABBz6BP39
+-f39-eYswxTABP39-f39-f3lLMMUwATAJMEE-f39-f39-eAswxTABMAkBCQEwCTABCTBBCTABMEk
+wAQkBMIkwATAJMAEwCTABCTABMAkBCQE-f39-f399izDFMAEwCTBBCQEwiQEwCQEJAQkBCQEJATB
+JATBJAQkBCQEJAQkBCQEJAQkBP39-f39-fYswxTABMAkBCQEwSQEwCQEwCTABMAkwQQkBMMkBCTB
+BCTBBCTABMAkwQT9-f39-f32LMMUwATAJAQkBCTABMEkBMAkBCQEJAQkBMAkwAQkwATAJATBJAQk
+BCQEJATAJAT9-f39-f33LMMUwAT9-f39-f395SzDFMAEwCTBBN8kwQQkwQTAJMAE-f39-f398izD
+FMAEwCQEJAQkwQTAJMAEwCTABCTBBCTABMEkwAQkwATEJAQkBCQEJAQkBP39-f39-fQswxTABMAk
+wQTAJATAJATBJAQkBMAkBMAkBCQEJAQkBCQEJATDJMAEwCTABMAkwQT9-f39-f3yLMMUwATAJATC
+JATAJATBJAQkBMAkBMAkwATAJAQkBCQEJATDJAQkBCQEJATBJAT9-f39-f3yLMMUwATAJATBJMEE
+wCTABCTABMEkBMAkBCQEJMAEwCQEJATDJMEEJMEEJMAE-f39-f398yzDFMAE-f39-f39-eUswxTA
+BNokBMEkBP3nJATNJAThJAT9-f394izDFMAEwCQEJAQkwQQkwQTAJMAEwCTABMAkBMEkBMEkBMEk
+wATAJMAEJMEEJMAEwSTABCQEwiTABMAkwATAJMAEJMAEwCQEJATDJMAEwCTBBMAkwATAJMAEJMEE
+JMEEJMEEJMEEwCTABMQkwAQkwATBJMAEwCQEwCTABMAkwATBJMAEwCQEwSTABCTBBMAkwATAJMAE
+JMEEJMAEwSTABCTABMEkBMAkwQTAJMAEJMEEJMAExSTABCTBBMAkwATAJMAEJMEEJAT9-f32LMMU
+wATAJAQkBMAkBMEkBMAkBCQEJATGJATBJATAJAQkBCQEwiQEwCQEJAQkBCQEJATBJATBJAQkBCQE
+JAQkBCQEJAQkBMMkBCQEJMAEwCQEJAQkBMIkBMEkBMEkBMAkwATAJATFJAQkBCQEJAQkBMIkBMAk
+wATAJMAEwCQEwiQEwCQEJATAJATAJATBJAQkBMAkBMAkBCQEJAQkBCQEJATAJATAJMEEJAQkBMAk
+BMAkBCQEwyQEJATAJATAJATBJAQkBCTBBCQE-f399izDFMAEwCTBBMAkBMEkBMAkwQTBJATAJATB
+JATBJATAJMEEwSQEwCQEwCTABMAkwQQkBMMkBCTBBCTBBCTABMAkwQTDJAQkBCQEwSQEJAQkBMIk
+BMEkBMEkBMAkBMMkBMMkBCQEJMAEwCQEJATAJATAJAQkBCQEJATBJATAJATAJMEEwCQEwCQEwSQE
+JATAJATAJMAEwCQEJAQkBCQEwCQEwCQEJAQkwQTAJATAJAQkBMMkwQTAJATAJATBJAQkBCQEJAQk
+BP39-fYswxTABMAkBCQEwCQEwSQEwCQEwSTABMQkBMEkBMEkBCQEJMAEwSQEwCQEJAQkBCQEwCTA
+BCTABMAkBMEkBCQEJAQkBMAkBMEkBMAkBCQEwCTABCTABMEkwAQkwQTAJATAJMEEwCTABCTABMEk
+BMAkwATAJAQkBCTBBCQEwSTBBCTBBCTABMAkBMEkBMEkwQTAJMAEJMAEwSQEwCQEJAQkwATAJAQk
+BCQEwSQEJAQkBCQEJMEEJAQkBMAkBMAkBMEkwQTAJMAEJMAEwCQEJATAJMAE-f399CzDFMAE-f39
+-f39-eUswxTABNwkBMUkwQQkBCQEJMEE-f39-f398izDFMAEwSTABMAkwATAJMAEJMAEwCTBBMAk
+BMQkBMUkBCQEJAQkBCQEJAT9-f39-f3yLMMUwATAJATBJATBJAQkBCQEJAQkwATIJMEEwyQEJAQk
+wQQkwQT9-f39-f3yLMMUwATCJAQkBMEkBCQEJMAEwCQEwiQExCQEJATDJAQkBMEkBCQEJAT9-f39
+-f3yLMMUwATAJMAEwSTABCTABMAkBCQEwCTABMckwQTAJATAJMEEwSQEJMEE-f39-f398izDFMAE
+-f39-f39-eUswxTABMAcwQTCHATLHMAExRzBBMAcwQTBHMAE-f39-f399izDFMAEwBwEwBwEzhwE
+wBwExBwEwBwEHATAHAQcBMAcBP39-f39-fUswxTABMAcBMAcBMAcwATBHMEEwBzABMAcBMAcBMQc
+BMAcBBwEwBwEHAT9-f39-f34LMMUwATAHMEEwhwEwBwEwhwEwBwEwBzABMUcwQTAHMEEwRzABP39
+-f39-fYswxTABMAcBMQcBMAcBMIcBMAcBBwEwBwExBwEwBwEHATAHATCHAT9-f39-f31LMMUwATA
+HATEHATAHATCHATAHAQcBMAcBMQcBMAcBBwEwBwEHATAHAT9-f39-f31LMMUwATAHATDHMEEwBzB
+BMAcwATBHMAExRzBBMAcwQTBHMAE-f39-f399izDFMAE-f39-f39-eUswxTABBzrBP39-f39-fUs
+wxTABP39-f39-f3lLMMUwATAJMEE-f39-f39-eAswxTABMAkBCQEwCTABCTBBCTABMEkwAQkBMIk
+wATAJMAEwCTABCTABMAkBCQE-f39-f399izDFMAEwCTBBCQEwiQEwCQEJAQkBCQEJATBJATBJAQk
+BCQEJAQkBCQEJAQkBP39-f39-fYswxTABMAkBCQEwSQEwCQEwCTABMAkwQQkBMMkBCTBBCTBBCTA
+BMAkwQT9-f39-f32LMMUwATAJAQkBCTABMEkBMAkBCQEJAQkBMAkwAQkwATAJATBJAQkBCQEJATA
+JAT9-f39-f33LMMUwAT9-f39-f395SzDFMAEwCTBBMskwQTDJMEEJMEEwCTABP39-f39-f3ALMMU
+wATAJAQkBCTBBMAkwATAJMAEJAQkBMMkBCQEJAQkBCQE-f39-f39-cIswxTABMAkwQTAJATAJATB
+JAQkBCTBBMMkwATAJMAEwCTBBP39-f39-f3ALMMUwATAJATCJATAJATBJAQkBCQEJATDJAQkBCQE
+JATBJAT9-f39-f39wCzDFMAEwCQEwSTBBMAkwAQkwATAJMEEwyTBBCTBBCTABP39-f39-f3BLMMU
+wAT9-f39-f395SzDFMAE2iQEwSQE-eckBM0kBM8kwQTBJAT9-f397izDFMAEwCQEJAQkwQQkwQTA
+JMAEwCTABMAkBMEkBMEkBMEkwATAJMAEJMEEJMAEwSTABCQEwiTABMAkwATAJMAEJMAEwCQEJATD
+JMAEwCTBBMAkwATAJMAEJMEEJMEEJMEEJMEEwCTABMQkwAQkwATBJMAEwCQEwCTABMAkwATBJMAE
+wCQEwSTABCTBBMAkwATAJMAEJAQkBMAkBMAkwQTAJMAEJMEEJMAExSTABCTBBMAkwATAJMAEJMEE
+JAT9-f39xCzDFMAEwCQEJATAJATBJATAJAQkBCQExiQEwSQEwCQEJAQkBMIkBMAkBCQEJAQkBCQE
+wSQEwSQEJAQkBCQEJAQkBCQEJATDJAQkBCTABMAkBCQEJATCJATBJATBJATAJMAEwCQExSQEJAQk
+BCQEJATCJATAJMAEwCTABMAkBMIkBMAkBCQEwCQEwCQEwSQEJAQkwQTAJATAJMEEJAQkBMAkBMAk
+BCQEwyQEJATAJATAJATBJAQkBCTBBCQE-f39-cQswxTABMAkwQTAJATBJATAJMEEwSQEwCQEwSQE
+wSQEwCTBBMEkBMAkBMAkwATAJMEEJATDJAQkwQQkwQQkwATAJMEEwyQEJAQkBMEkBCQEJATCJATB
+JATBJATAJATDJATDJAQkBCTABMAkBCQEwCQEwCQEJAQkBCQEwSQEwCQEwCTBBMAkBMAkBMEkBCQE
+JAQkBMAkBMAkBCQEJMEEwCQEwCQEJATDJMEEwCQEwCQEwSQEJAQkBCQEJAT9-f39xCzDFMAEwCQE
+JATAJATBJATAJATBJMAExCQEwSQEwSQEJAQkwATBJATAJAQkBCQEJATAJMAEJMAEwCQEwSQEJAQk
+BCQEwCQEwSQEwCQEJATAJMAEJMAEwSTABCTBBMAkBMAkwQTAJMAEJMAEwSQEwCTABMAkBCQEJMEE
+JATBJMEEJMEEJMAEwCQEwSQEwSTBBMAkwAQkwATAJMEEJATBJAQkBCQEJAQkwQQkBCQEwCQEwCQE
+wSTBBMAkwAQkwATAJAQkBMAkwAT9-f39wizDFMAE-f39-f39-eUswxTABNwkBMUkwQQkBCQEJMEE
+-f39-f398izDFMAEwSTABMAkwATAJMAEJMAEwCTBBMAkBMQkBMUkBCQEJAQkBCQEJAT9-f39-f3y
+LMMUwATAJATBJATBJAQkBCQEJAQkwATIJMEEwyQEJAQkwQQkwQT9-f39-f3yLMMUwATCJAQkBMEk
+BCQEJMAEwCQEwiQExCQEJATDJAQkBMEkBCQEJAT9-f39-f3yLMMUwATAJMAEwSTABCTABMAkBCQE
+wCTABMckwQTAJATAJMEEwSQEJMEE-f39-f398izDFMAE-f39-f39-eUswxTABMAcwQTAHMEEwRzA
+BP39-f39-f3WLMMUwATAHATAHAQcBMAcBBwEwBwE-f39-f39-dUswxTABMAcBMAcBBwEwBwEHAT9
+-f39-f392CzDFMAEwBzBBMAcwQTBHMAE-f39-f39-dYswxTABMAcBMAcBBwEwBwEwhwE-f39-f39
+-dUswxTABMAcBMAcBBwEwBwEHATAHAT9-f39-f391SzDFMAEwBzBBMAcwQTBHMAE-f39-f39-dYs
+wxTABP39-f39-f3lLMMUwAQczQT9-f39-f391SzDFMAE-f39-f39-eUswxTABMAkwQT9-f39-f39
+4CzDFMAEwCQEJATAJMAEJMEEJMAEwSTABCQEwiTABMAkwATAJMAEJMAEwCQEJAT9-f39-f32LMMU
+wATAJMEEJATCJATAJAQkBCQEJAQkBMEkBMEkBCQEJAQkBCQEJAQkBCQE-f39-f399izDFMAEwCQE
+JATBJATAJATAJMAEwCTBBCQEwyQEJMEEJMEEJMAEwCTBBP39-f39-fYswxTABMAkBCQEJMAEwSQE
+wCQEJAQkBCQEwCTABCTABMAkBMEkBCQEJAQkBMAkBP39-f39-fcswxTABP39-f39-f3lLMMUwATA
+JATpJMEEJMEEwCTABM8kwQTLJMEEJAT9-f39-f3ELMMUwATAJATBJMEEJAQkBMAkwAQkBMIkwAQk
+wQQkwQQkBMEkwQTDJAQkBCQEJAQkBMUkwQQkwATEJAQkBCTBBMAkwATAJMAEJMEEJAT9-f39-f3E
+LMMUwATAJATBJMAEwSQEwCQEJAQkBMEkBCQEJMAEwCTABMAkBMEkwATEJMAEwCTABMAkwQTEJATA
+JAQkBMMkwQTAJATAJATBJAQkBCQEJAQkBP39-f39-cQswxTABMAkBMEkBMIkBMAkwQQkBMEkBCQE
+JATBJATBJATBJATFJAQkBCQEJATBJATEJATAJAQkBMMkBMIkBMAkBMEkBCQEJAQkBCQE-f39-f39
+xCzDFMAEwCTBBMAkwAQkBCQEJAQkBMAkwAQkwATAJATBJATCJMAEwCTABMMkwQQkwQQkwATEJMEE
+JAQkBMMkBMEkwQTAJMAEJMAEwCQEJAQkwQT9-f39-f3CLMMUwAT9-f39-f395SzDFMAE2iQEwSQE
+-eckBM0kBP39-f39yCzDFMAEwCQEJAQkwQQkwQTAJMAEwCTABMAkBMEkBMEkBMEkwATAJMAEJMEE
+JMAEwSTABCQEwiTABMAkwATAJMAEJMAEwCQEJATDJMAEwCTBBMAkwATAJMAEJMEEJMEEJMEEJMEE
+wCTABMQkwAQkwATBJMAEwCQEwCTABMAkwATBJMAEwCQEwCTBBMAkwAQkwQQkwATFJMAEJMEEwCTA
+BMAkwAQkwQQkBP39-f3cLMMUwATAJAQkBMAkBMEkBMAkBCQEJATGJATBJATAJAQkBCQEwiQEwCQE
+JAQkBCQEJATBJATBJAQkBCQEJAQkBCQEJAQkBMMkBCQEJMAEwCQEJAQkBMIkBMEkBMEkBMAkwATA
+JATFJAQkBCQEJAQkBMIkBMAkwATAJMAEwCQEwiQEwCTBBCQEJATAJATAJAQkBMMkBCQEwCQEwCQE
+wSQEJAQkwQQkBP39-f3cLMMUwATAJMEEwCQEwSQEwCTBBMEkBMAkBMEkBMEkBMAkwQTBJATAJATA
+JMAEwCTBBCQEwyQEJMEEJMEEJMAEwCTBBMMkBCQEJATBJAQkBCQEwiQEwSQEwSQEwCQEwyQEwyQE
+JAQkwATAJAQkBMAkBMAkBCQEJAQkBMEkBMAkBMAkBCQEJMEEwCQEwCQEJATDJMEEwCQEwCQEwSQE
+JAQkBCQEJAT9-f393CzDFMAEwCQEJATAJATBJATAJATBJMAExCQEwSQEwSQEJAQkwATBJATAJAQk
+BCQEJATAJMAEJMAEwCQEwSQEJAQkBCQEwCQEwSQEwCQEJATAJMAEJMAEwSTABCTBBMAkBMAkwQTA
+JMAEJMAEwSQEwCTABMAkBCQEJMEEJATBJMEEJMEEJMAEwCQEwSQEJAQkBCQEJMEEJAQkBMAkBMAk
+BMEkwQTAJMAEJMAEwCQEJATAJMAE-f39-doswxTABP39-f39-f3lLMMUwATcJAQkBMMkwQT9-f39
+-f36LMMUwATBJMAEwCTABMAkwAQkwATAJMEEwCQExCQEJATFJAT9-f39-f36LMMUwATAJATBJATB
+JAQkBCQEJAQkwATIJMEEwyTBBP39-f39-foswxTABMIkBCQEwSQEJAQkwATAJATCJATGJATDJAT9
+-f39-f38LMMUNBQEJMAEwSTABCTABMAkBCQEwCTABMkkBMAkBMAkwQT9-f39-f36LMIUNMEU-f39
+-f39-eg0wAAAAAAAAAAB
+:: map/.info.pod
+--[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:08:36"]]
+:: map/0.map
+b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTAxLTE3IDEwOjM1OjQ4Iixtb2RpZmllZD0iMjAyNS0x
+MS0xNSAwMTozNToxMyIscmV2aXNpb249Ml1dbHo0AEsAAABQAAAA8Rx7e2JtcD1weHUATIAgIAD-
+AAD---8DLGhpZGRlbj1mYWxzZSxwYW5feD0wCADDeT0wLHRpbGVfaD0xCgAQdwoAgHpvb209MX19
+:: pageHandlers/.info.pod
+--[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:08:36"]]
+:: popups/.info.pod
+--[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:08:36"]]
+:: self/.info.pod
+--[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:08:36"]]
+:: self/404/.info.pod
+--[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:08:36"]]
+:: self/404/main.picoml
+b64$LS1bW3BvZF9mb3JtYXQ9InJhdyIsY3JlYXRlZD0iMjAyNS0xMS0xNSAxOTowNzozOCIsbW9k
+aWZpZWQ9IjIwMjUtMTEtMjggMjA6NDk6MjAiLHJldmlzaW9uPTExXV0KPG1ldGFkYXRhIHRpdGxl
+PSI0MDQgLSBQYWdlIG5vdCBmb3VuZCIgaWNvbj0nLS1bW3BvZF90eXBlPSJnZngiXV11bnBvZCgi
+YjY0OmJIbzBBQ3NBQUFBc0FBQUE4d2R3ZUhVQVF5QUtDZ1NRQ0FBSU1BZ0FDQUFJVUFnQURBRHdB
+TEJZTUFnd0NEQUlNQWd3Q0RBSXNBPT0iKSc_PC9tZXRhZGF0YT4KCjx0aXRsZSBhbGlnbj0ibGVm
+dCI_NDA0IFBhZ2UgTm90IEZvdW5kPC90aXRsZT4=
+:: self/docs/.info.pod
+--[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:08:36"]]
+:: self/docs/lua/.info.pod
+--[[pod,created="2025-12-08 19:51:38",modified="2025-12-14 19:08:36"]]
+:: self/docs/lua/main.picoml
+b64$LS1bW3BvZF9mb3JtYXQ9InJhdyIsY3JlYXRlZD0iMjAyNS0xMS0xNiAwNzo1MzowOCIsbW9k
+aWZpZWQ9IjIwMjUtMTEtMjkgMTk6MTI6MjAiLHJldmlzaW9uPTQ1XV0KPG1ldGFkYXRhIGljb249
+Jy0tW1twb2RfdHlwZT0iZ2Z4Il1ddW5wb2QoImI2NDpiSG8wQURZQUFBQTBBQUFBOENWd2VIVUFR
+eUFLQ2dSQUh4VlFIaE1PSUI0VER4c1REZ0FPUXcwVEhuTXVRejRIRGhNZUZ3NEFEZ2NlRng0Z0Ro
+Y2VVQjVBIiknIHRpdGxlPSJQaWNvTUwgZG9jcyI_PC9tZXRhZGF0YT4KPHRpdGxlIHVuZGVybGlu
+ZT10cnVlPlBpY29NTCBMdWE8L3RpdGxlPgoKCjx0aXRsZSBtYXJnaW5fbGVmdD0yIGFsaWduPSJs
+ZWZ0Ij5PYmplY3QgVmFyaWFibGVzPC90aXRsZT4KPHRleHQgbWFyZ2luX2xlZnQ9Mj5ob3ZlciAt
+IHdoZXRoZXIgYWN0aXZlbHkgaG92ZXJpbmcgb3ZlciB0aGUgb2JqZWN0PC90ZXh0PgoKPHRpdGxl
+IG1hcmdpbl9sZWZ0PTIgYWxpZ249ImxlZnQiPk9iamVjdCBGdW5jdGlvbnM8L3RpdGxlPgo8dGV4
+dCBtYXJnaW5fbGVmdD0yPmxlZnRtb3VzZWRvd24KbGVmdG1vdXNlY2xpY2sKbGVmdG1vdXNldW5w
+cmVzcwoKcmlnaHRtb3VzZWRvd24KcmlnaHRtb3VzZWNsaWNrCnJpZ2h0bW91c2V1bnByZXNzCgpt
+aWRkbGVtb3VzZWRvd24KbWlkZGxlbW91c2VjbGljawptaWRkbGVtb3VzZXVucHJlc3MKCndoZWVs
+eAp3aGVlbHkKCnVwZGF0ZQpkcmF3IC0gbm90IGFkdmlzZWQgdG8gbW9kaWZ5Lgo8L3RleHQ_Cgo8
+dGl0bGUgbWFyZ2luX2xlZnQ9MiBhbGlnbj0ibGVmdCI_U2NyaXB0czwvdGl0bGU_Cjx0ZXh0IG1h
+cmdpbl9sZWZ0PTI_Q3JlYXRlIHNjcmlwdHMgd2l0aCAmbHQ7c2NyaXB0IHNyYz0ibWFpbi5sdWEi
+Jmd0OyZsdDsvc2NyaXB0Jmd0OwpUaGVzZSBhcmUgKnNhbmRib3hlZCogd2l0aCB0aGUgcGVybWlz
+c2lvbnMgdGhhdCB0aGUgdXNlciBnaXZlcyAoL2FwcGRhdGEvc3lzdGVtL3BpY29tbC9wZXJtaXNz
+aW9uL2RlZmF1bHQucG9kKQpTZWUgc2FuZGJveEZ1bmN0aW9ucy5sdWEgKG9yIGF3YWl0IGZ1dHVy
+ZSBkb2N1bWVudGF0aW9uKSBmb3IgdGhlIGRlZmF1bHQgZnVuY3Rpb25zIHlvdSBoYXZlIGFjY2Vz
+cyB0by4KCkN1c3RvbSBmdW5jdGlvbnM6CglhdHRhY2hTY3JpcHRzKGZpbGVwYXRoKSAtIHVzZWQg
+aW4gJmx0O3NjcmlwdCZndDsgdG8gbG9hZCBhIGx1YSBzY3JpcHQKCW9wZW5UYWIocGFnZXVybCx3
+aGVyZSkgLSBvcGVucyBhIG5ldyB0YWIsIHdoZXJlID09ICJzZWxmIiBvciAibmV3IgoJd2Fybi93
+ZWJ3YXJuKHdhcm5pbmcpIC0gd2FybmluZyBhcyBhIG5vdGlmaWNhdGlvbiBhbmQgcHJpbnRlZCB0
+byBob3N0IG9zIHRlcm1pbmFsCglnZXRFbGVtZW50QnlJZChpZCkgLSBnZXQgYW4gZWxlbWVudAoJ
+ZGVzdHJveShvYmplY3QpIC0gZGVzdHJveSBhbiBlbGVtZW50IChvYmplY3QgY2FuIGFsc28gYmUg
+dGhlIGlkKQoKU3lzdGVtIFZhcmlhYmxlcyAoeW91IGhhdmUgYWNjZXNzIHRvKQoJX19jdXJzb3JE
+YXRhOgoJCXRoZSBkYXRhIG9mIHRoZSBjdXJzb3IgaW4gdGhlIGZvcm0gb2Y6CgkJCXsKCQkJCXg9
+bW91c2UgeCAocmVsYXRpdmUgdG8gdGhlIHBhZ2UgYW5kIHNjcm9sbGluZykKCQkJCXk9bW91c2Ug
+eSAocmVsYXRpdmUgdG8gdGhlIHBhZ2UgYW5kIHNjcm9sbGluZykKCQkJCXJhd3g9bW91c2UgeCAo
+cmVsYXRpdmUgdG8gdGhlIHBhZ2UpCgkJCQlyYXd5PW1vdXNlIHkgKHJlbGF0aXZlIHRvIHRoZSBw
+YWdlKQoJCQkJYj1tb3VzZSBidXR0b24KCQkJCXdoZWVseD1zY3JvbGx3aGVlbCB4CgkJCQl3aGVl
+bHk9c2Nyb2xsd2hlZWwgeQoJCQkJbGI9bGFzdCBtb3VzZSBidXR0b24KCQkJfQoJX19jdXJzb3JT
+cHJpdGU6CgkJdGhlIHNwcml0ZSBvZiB0aGUgY3Vyc29yLCBob3cgeW91IHdvdWxkIGZvciBwaWNv
+dHJvbiBndWlzIChlLmc6IDEsICJjdXJzb3IiKQoJX192aWV3cG9ydDoKCQl0aGUgcHJvcG9ydGlv
+bnMgb2YgdGhlIHZpZXdwb3J0IGluIHRoZSBmb3JtIG9mOgoJCQl7CgkJCQl3aWR0aD13aWR0aAoJ
+CQkJaGVpZ2h0PWhlaWdodAoJCQl9CglfX3Njcm9sbDoKCQl0aGUgc2Nyb2xsaW5nIGRhdGEgaW4g
+dGhlIGZvcm0gb2Y6CgkJCXsKCQkJCXg9eAoJCQkJeT15CgkJCX0KCV9fcGFnZURhdGE6CgkJc29t
+ZSBwYWdlIGRhdGEgaW4gdGhlIGZvcm0gb2Y6CgkJCXsKCQkJCXdpZHRoPXdpZHRoCgkJCQloZWln
+aHQ9aGVpZ2h0CgkJCQliYWNrZ3JvdW5kPShjb2xvciBwYWxldHRlKQoJCQl9CjwvdGV4dD4=
+:: self/docs/main.picoml
+b64$LS1bW3BvZF9mb3JtYXQ9InJhdyIsY3JlYXRlZD0iMjAyNS0xMS0xNiAwNjowMDo1MSIsbW9k
+aWZpZWQ9IjIwMjUtMTEtMjggMjA6NDg6NTAiLHJldmlzaW9uPTQwXV0KPG1ldGFkYXRhIGljb249
+Jy0tW1twb2RfdHlwZT0iZ2Z4Il1ddW5wb2QoImI2NDpiSG8wQURZQUFBQTBBQUFBOENWd2VIVUFR
+eUFLQ2dSQUh4VlFIaE1PSUI0VER4c1REZ0FPUXcwVEhuTXVRejRIRGhNZUZ3NEFEZ2NlRng0Z0Ro
+Y2VVQjVBIiknIHRpdGxlPSJQaWNvTUwgZG9jcyI_PC9tZXRhZGF0YT4KPHRpdGxlIHVuZGVybGlu
+ZT10cnVlPlBpY29NTCBkb2N1bWVudGF0aW9uPC90aXRsZT4KPGxpbmsgYWxpZ249ImNlbnRlciIg
+dGFyZ2V0PSJsdWEvIj5QaWNvTUwgTHVhPC9saW5rPgoKCjx0aXRsZSBtYXJnaW5fbGVmdD0yIGFs
+aWduPSJsZWZ0Ij5PYmplY3QgdHlwZXM8L3RpdGxlPgo8dGV4dCBtYXJnaW5fbGVmdD0yPiZsdDt0
+aXRsZSZndDsgLSB1c2VzIDJ4IHNpemUgdGV4dCwgZGVmYXVsdHMgdG8gYmVpbmcgY2VudGVyZWQg
+JiBoYXZpbmcgYSBzbWFsbCBtYXJnaW4tdG9wCiZsdDt0ZXh0Jmd0OyAtIHRleHQgb2JqZWN0LCBu
+byBkZWZhdWx0cwombHQ7aW1hZ2UmZ3Q7IC0gaW1hZ2UsIGVpdGhlciAucG5nIG9yIGEgcG9kZGVk
+IHBpY290cm9uIGltYWdlCiZsdDttZXRhZGF0YSZndDsgLSBsZXRzIHlvdSBzZXQ6IHRpdGxlLCBp
+Y29uLCBkZXNjcmlwdGlvbiAmIGF1dGhvciBpbiB0aGUgYXR0cmlidXRlcwombHQ7cDh0ZXh0Jmd0
+OyAtIGxldHMgeW91IHdyaXRlIHRleHQgaW4gcGljbzggZm9udAombHQ7bGluayZndDsgLSBjbGlj
+a2FibGUgbGluayB3aXRoIGEgdGFyZ2V0ICh1cmwpIGFuZCBhIGxvY2F0aW9uICgic2VsZiIgb3Ig
+Im5ldyIpCiZsdDtzY3JpcHQmZ3Q7IC0gYXR0YWNoIGEgc2NyaXB0IHdpdGggYSBsdWEgc291cmNl
+IChzcmMpCjwvdGV4dD4KCjx0aXRsZSBtYXJnaW5fbGVmdD0yIGFsaWduPSJsZWZ0Ij5HbG9iYWwg
+YXR0cmlidXRlczwvdGl0bGU_CjxwOHRleHQgbWFyZ2luX2xlZnQ9Mj5mb3IgYWxsIG9iamVjdHM8
+L3A4dGV4dD4KPHRleHQgbWFyZ2luX2xlZnQ9Mj5tYXJnaW4gLSBzZXRzIG1hcmdpbl9sZWZ0LCBt
+YXJnaW5fcmlnaHQgKGRlZnVuY3QpLCBtYXJnaW5fdG9wLCBtYXJnaW5fZG93biB0byB0aGlzCm1h
+cmdpbl9sZWZ0LCBtYXJnaW5fcmlnaHQgKGRlZnVuY3QpLCBtYXJnaW5fdG9wLCBtYXJnaW5fZG93
+biAtIG1hcmdpbnMgZm9yIHRoZWlyIHJlc3BlY3RpdmUgc2lkZXMKY3Vyc29yIC0gdGhlIGN1cnNv
+ciB0byBzZXQgdG8gKHNhbWUgYXMgcGljb3Ryb24gZ3Vpcyk8L3RleHQ_Cgo8dGl0bGUgbWFyZ2lu
+X2xlZnQ9MiBhbGlnbj0ibGVmdCI_VGV4dCBPYmplY3QgQXR0cmlidXRlczwvdGl0bGU_CjxwOHRl
+eHQgbWFyZ2luX2xlZnQ9Mj5mb3IgdGV4dCwgcDh0ZXh0LCB0aXRsZSwgYW5kIGxpbms8L3A4dGV4
+dD4KPHRleHQgbWFyZ2luX2xlZnQ9Mj4KYWxpZ24gKGhvcml6b250YWwgb25seSwgZm9yIG5vdykg
+LSBzZXQgdGhlIGFsaWdubWVudCBvZiBhbiBvYmplY3QsICJsZWZ0IiAiY2VudGVyIiAicmlnaHQi
+CmNvbG9yIC0gc2V0IHRoZSBjb2xvciBvZiBhbiBvYmplY3QgY29udGFpbmluZyB0ZXh0IChsZWF2
+ZSBibGFuayBmb3IgcHJldmlvdXNseSB1c2VkIGNvbG9yLzApCnVuZGVybGluZSAtIHVuZGVybGlu
+ZSB0aGUgdGV4dCAodHJ1ZS9mYWxzZSkKPC90ZXh0PgoKPHRpdGxlIG1hcmdpbl9sZWZ0PTIgYWxp
+Z249ImxlZnQiPkxpbmstc3BlY2lmaWMgYXR0cmlidXRlczwvdGl0bGU_CjxwOHRleHQgbWFyZ2lu
+X2xlZnQ9Mj5UaGlzIGluY2x1ZGVzIHRleHQgb2JqZWN0IGF0dHJpYnV0ZXMgYXMgc2VlbiBhYm92
+ZTwvcDh0ZXh0Pgo8dGV4dCBtYXJnaW5fbGVmdD0yPmhvdmNvbG9yIC0gdGhlIGNvbG9yIHRoYXQg
+aXQgdHVybnMgaW50byBvbiBob3Zlcgp0YXJnZXQgLSB0aGUgdXJsIG9mIGEgcGFnZSB0byBvcGVu
+CndoZXJlIC0gInNlbGYiIG9yICJuZXciLCB3aGVyZSB0byBvcGVuIHRoZSB0YWIKPC90ZXh0PgoK
+PHRpdGxlIG1hcmdpbl9sZWZ0PTIgYWxpZ249ImxlZnQiPkltYWdlIGF0dHJpYnV0ZXM8L3RpdGxl
+Pgo8cDh0ZXh0IG1hcmdpbl9sZWZ0PTI_Zm9yIHRoZSBpbWFnZSBvYmplY3Q8L3A4dGV4dD4KPHRl
+eHQgbWFyZ2luX2xlZnQ9Mj53aWR0aCAtIHdpZHRoIG9mIGFuIGltYWdlLCAiYXV0byIgKHJlc2l6
+ZXMgaW1hZ2UgdG8gZml0IHdlbGwpLCBkZWZhdWx0cyB0byBmdWxsIHJlc29sdXRpb24KaGVpZ2h0
+IC0gaGVpZ2h0IG9mIGFuIGltYWdlLCAiYXV0byIgKHJlc2l6ZXMgaW1hZ2UgdG8gZml0IHdlbGwp
+LCBkZWZhdWx0cyB0byBmdWxsIHJlc29sdXRpb24Kc3JjIC0gc291cmNlIG9mIHRoZSBpbWFnZSAo
+YSBwb2RkZWQgaW1hZ2UvdXNlcmRhdGEgb3IgcG5nKQo8L3RleHQ_
+:: self/newtab/.info.pod
+--[[pod,created="2025-12-08 19:51:38",modified="2025-12-14 19:08:36"]]
+:: self/newtab/main.picoml
+b64$LS1bW3BvZF9mb3JtYXQ9InJhdyIsY3JlYXRlZD0iMjAyNS0xMS0xNSAyMzo1OToxNSIsbW9k
+aWZpZWQ9IjIwMjUtMTEtMzAgMDM6Mjk6MzgiLHJldmlzaW9uPTI3XV0KPG1ldGFkYXRhIHRpdGxl
+PSJOZXcgdGFiIj48L21ldGFkYXRhPgoKPHRpdGxlPll1bW15IHBsYWNlcyE8L3RpdGxlPgo8bGlu
+ayBhbGlnbj0iY2VudGVyIiB0YXJnZXQ9Imh0dHBzOi8vcmF3LmdpdGh1YnVzZXJjb250ZW50LmNv
+bS9Bc3RyYWxzcGFydi9waWNvbG9jby9yZWZzL2hlYWRzL21haW4vIiB3aGVyZT0ic2VsZiI_UGlj
+b0xvY28gU2VhcmNoIEVuZ2luZTwvbGluaz4KPGxpbmsgYWxpZ249ImNlbnRlciIgdGFyZ2V0PSJo
+dHRwczovL2FzdHJhbHNwYXJ2Lm5lb2NpdGllcy5vcmcvcGljb21sL2NoYW5nZWxvZy8iIHdoZXJl
+PSJzZWxmIj5DaGFuZ2Vsb2c8L2xpbms_CjxsaW5rIGFsaWduPSJjZW50ZXIiIHRhcmdldD0ic2Vs
+ZjovL3dlbGNvbWUiIHdoZXJlPSJzZWxmIj5XZWxjb21lIHBhZ2U8L2xpbms_CjxsaW5rIGFsaWdu
+PSJjZW50ZXIiIHRhcmdldD0ic2VsZjovL3NjcmlwdCIgd2hlcmU9InNlbGYiPkV4YW1wbGUgb2Yg
+c2NyaXB0czwvbGluaz4=
+:: self/script/.info.pod
+--[[pod,created="2025-12-08 19:51:38",modified="2025-12-14 19:08:36"]]
+:: self/script/main.picoml
+b64$LS1bW3BvZF9mb3JtYXQ9InJhdyIsY3JlYXRlZD0iMjAyNS0xMS0xNiAyMToxMzo1OSIsbW9k
+aWZpZWQ9IjIwMjUtMTEtMjggMjA6NDk6NDkiLHJldmlzaW9uPTE3XV0KPG1ldGFkYXRhIHRpdGxl
+PSJTY3JpcHRpbmciIGljb249Jy0tW1twb2RfdHlwZT0iZ2Z4Il1ddW5wb2QoImI2NDpiSG8wQURB
+QUFBQXVBQUFBOEI5d2VIVUFReUFLQ2dUZ0R4dFFBeEFPQUFNZ0F5QU9FQU1BQXpBT0lBTUFBeEFP
+SUFNZ0F3QU9FQU5RRHZBSiIpJz48L21ldGFkYXRhPgoKPHRpdGxlPll1bW15IGV4YW1wbGUgc2Ny
+aXB0cyE8L3RpdGxlPgo8cDh0ZXh0PlRoZXJlIGlzIG11Y2ggbW9yZSB0aGF0IGNhbiBiZSBkb25l
+LCB0aGlzIGlzIGp1c3QgZXhhbXBsZXMsIHNlZSB0aGUgZG9jczwvcDh0ZXh0PgoKPHRleHQgaWQ9
+Im1hbmlwdWxhdGUiPkRPTSBtYW5pcHVsYXRpb24hPC90ZXh0Pgo8dGV4dCBjdXJzb3I9InBvaW50
+ZXIiIGxlZnRtb3VzZWNsaWNrPSJwbGF5Tm90ZSgpIj5Tb3VuZHMgKGNsaWNrKSE8L3RleHQ_Cjx0
+ZXh0IGlkPSJjcHUiPkNQVSBVc2FnZSBsb2FkaW5nITwvdGV4dD4KPHRleHQgaWQ9Im1vdXNlIj5N
+b3VzZSBYOiBuaWwsIHk6IG5pbDwvdGV4dD4KCjxzY3JpcHQgc3JjPSJtYWluLmx1YSI_PC9zY3Jp
+cHQ_
+:: self/welcome/.info.pod
+--[[pod,created="2025-12-08 19:51:38",modified="2025-12-14 19:08:36"]]
+:: self/welcome/main.picoml
+b64$LS1bW3BvZF9mb3JtYXQ9InJhdyIsY3JlYXRlZD0iMjAyNS0xMS0xNSAxOTozNzowMSIsbW9k
+aWZpZWQ9IjIwMjUtMTEtMzAgMjM6NDk6MjIiLHJldmlzaW9uPTU2XV0KPG1ldGFkYXRhIHRpdGxl
+PSJQaWNvIE1hcmt1cCBMYW5ndWFnZSIgaWNvbj0nLS1bW3BvZF90eXBlPSJnZngiXV11bnBvZCgi
+YjY0OmJIbzBBQzhBQUFBdEFBQUE4QXB3ZUhVQVF5QUtDZ1R3QkJzQUN3QWJBRHNBQ3dBTEVDc1FE
+QUR3QVJ2QUl3QURRQ01BQTBBREFBTUFJNUE9IiknPjwvbWV0YWRhdGE_Cgo8dGl0bGUgdW5kZXJs
+aW5lPXRydWU_UGljbyBNYXJrdXAgTGFuZ3VhZ2U8L3RpdGxlPgo8cDh0ZXh0IGFsaWduPSJjZW50
+ZXIiPmJhc2VkIG9uIHNpbXBsZXIgdGltZXMuPC90ZXh0Pgo8aW1hZ2UgYWxpZ249ImNlbnRlciIg
+d2lkdGg9ImF1dG8iIHNyYz0nLS1bW3BvZF90eXBlPSJnZngiXV11bnBvZCgiYjY0OmJIbzBBRUFC
+QUFBekJBQUE5UWR3ZUhVQVF5Q0JQUVQtRS05MlV4NVRQak1fTS01VENRQzdFeDRUUGhNX0UxNFRI
+aE1OQUI5VEN3QUNMeE5fQ3dBQ2hGNVRQak1lTS01VkNRQ1QxcjhiUHIwX3ZUNDlBZ0JQdmY0VnZS
+RUFJUjQ5QWdCdkxoZmVFZjRBR3dBZEQwMEFCR0FfQTk0RC1nRUpBR0s5UG4xX2ZYNEtBQThWQUFG
+dlRnT19BLTRDRlFBYkRRSUFiOTZ6LWdNOVBnSUFBQy1PMHpJQUJES184d0NMQUEwQ0FMbXVFeThn
+Y3l3VC1nQTlQZ0lBNzM1OVBqMnVBd3dYSEZNY0Z3d0RId0FHUHl3ekxCOEFCejljTTF3YkFBci1J
+R0FETEFjTU13d0hMQVBfWVJNOE16d1QtbUpUSEZQX1paUF9CRDhhdnJzX2U3NTdQanNfT3o2N2Zu
+c191MDQ3RWdBa0l6c19BZ0FJQ2dBZnpoZ0FOeGU3RmdCdnV6NDd2bnVPRkFBckx6c19BZ0FFQ0lR
+QUR4d0FOZ09DQUFNd0FRRUlBRDhfdTA0V0FDeFFQcnZfLTNjPSIpJz48L2ltYWdlPgoKPHRpdGxl
+PmFib3V0ITwvdGl0bGU_Cjx0ZXh0PlRoaXMgaXMgYSBtYXJrdXAgbGFuZ3VhZ2UgKHNpbWlsYXIg
+dG8gaHRtbCkgdGhhdCBpcyBidWlsdCB0byBiZSBhIGNsZWFuLCBlYXN5IGFuZCBzbWFsbCAocGlj
+byEpIGZvcm0gb2Ygd2ViZGV2IGNyZWF0ZWQgd2l0aCB0aGUgaW50ZW50IG9mIFBpY290cm9uIQpU
+aGlzLCB0aGVvcmV0aWNhbGx5LCB3b3VsZCBiZSBwb3NzaWJsZSB0byBjcmVhdGUgYSBub24gcGlj
+b3Ryb24gYnJvd3NlciB3aXRoIHBpY28gbWFya3VwIGxhbmd1YWdlIQo8L3RleHQ_Cgo8bGluayB0
+YXJnZXQ9InNlbGY6Ly9kb2NzIiB3aGVyZT0ic2VsZiI_RG9jdW1lbnRhdGlvbjwvbGluaz4KCjx0
+aXRsZT5jcmVkaXRzOjwvdGl0bGU_Cjx0ZXh0PkBtZWl2dXUgLSB0aGUgM2Qgc3R5bGUgb2YgdGhl
+IG5hdmJhciBpcyAqaGVhdmlseSogaW5zcGlyZWQgYnkgdGhlaXIgU3VwZXIgUGljb25ldCBFeHBs
+b3JlciE8L3RleHQ_
+:: sfx/.info.pod
+--[[pod,created="2025-12-08 19:51:38",modified="2025-12-14 19:08:36"]]
+:: sfx/0.sfx
+b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTA3LTMxIDA4OjMwOjI4Iixtb2RpZmllZD0iMjAyNS0x
+MS0xNSAwMTozNToxNiIscmV2aXNpb249MV1dbHo0AKAAAAALCgAA-zBweHUAAygAAAQABA9AEAIO
+AAGgASACoA4ADxAADfDKAQIDQA8PkAQFBgdADJAICQoLQAyQDwwPDQ8ODEAM8P8BAOv-J6oBEAYP
+MBABIAEgAfAAAhACDhABIA8hIAEwD0Dwww8oD--wxg-4Cg--D4AP9w8NAfAJARAGDjAA------_9
+H-8BAKzPyA9AAA8QQP--sPD-AQD-6lD-----KQ==
+:: [eoc]

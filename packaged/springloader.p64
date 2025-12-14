@@ -1,0 +1,3689 @@
+picotron cartridge // www.picotron.net
+version 2
+
+:: font/
+:: gfx/
+:: map/
+:: pal/
+:: sfx/
+:: src/
+:: src/bg/
+:: src/gui/
+:: src/lib/
+:: src/view/
+:: main.lua
+--[[pod_format="raw",created="2025-12-03 21:28:52",modified="2025-12-11 18:17:45",revision=124,xstickers={}]]
+include "src/lib/require.lua"
+
+local Util = require("src/util")
+local Screen = require("src/screen")
+
+local ViewAutoTiles = require("src/view/auto_tiles")
+local ViewBigTiles = require("src/view/big_tiles")
+local ViewSmallTiles = require("src/view/small_tiles")
+local ViewColumns = require("src/view/columns")
+
+local BGBasic = require("src/bg/basic")
+local BGBubbles = require("src/bg/bubbles")
+local BGPicotron = require("src/bg/picotron")
+
+function _init()
+	if env().sandbox then
+		notify("Springloader isn't very useful while sandboxed! Exiting...")
+		exit()
+	end
+	
+	if Util.instance_running() then
+		notify("Springloader is already running.")
+		exit()
+	end
+	
+	window {
+		title = "Springloader",
+		icon = --[[pod_type="gfx"]]unpod("b64:bHo0ABgAAAAWAAAA8AdweHUAQyAICAT3ACAXQAdwF3AHQBeg"),
+		z = -1001, -- So we don't lose windowed apps that start in the current workspace
+		pauseable = false,
+		autoclose = false,
+		can_escape_fullscreen = true
+	}
+	
+	Util.show_toolbar()
+	
+	Screen:install_view(ViewAutoTiles)
+	Screen:install_view(ViewBigTiles)
+	Screen:install_view(ViewSmallTiles)
+	Screen:install_view(ViewColumns)
+	
+	Screen:install_background(BGBasic)
+	Screen:install_background(BGBubbles)
+	Screen:install_background(BGPicotron)
+	
+	Screen:init()
+end
+
+function _update()
+	Screen:update()
+end
+
+function _draw()
+	Screen:draw()
+end
+
+:: src/bg/basic.lua
+--[[pod_format="raw",created="2025-12-05 22:07:25",modified="2025-12-14 00:35:13",revision=18,xstickers={}]]
+
+local Class = require("src/class")
+
+local BGBasic = Class.class {
+	name = "Basic",
+	config_name = "basic"
+}
+
+function BGBasic.new()
+	return BGBasic:new_obj()
+end
+
+function BGBasic:update()
+
+end
+
+function BGBasic:draw(theme)
+	cls(theme.back)
+end
+
+return BGBasic
+
+:: src/bg/bubbles.lua
+--[[pod_format="raw",created="2025-12-05 21:46:18",modified="2025-12-14 00:36:59",revision=45,xstickers={}]]
+
+local Class = require("src/class")
+local Util = require("src/util")
+
+local BGBubbles = Class.class {
+	name = "Bubbles",
+	config_name = "bubbles"
+}
+
+function BGBubbles.new()
+	local bg = BGBubbles:new_obj({
+		bubbles = {},
+		timer = 0
+	})
+
+	for i = 1, 32 do
+		local new_bubble = {
+			x = rnd(480),
+			y = rnd(270),
+			x_velocity = rnd() * 16,
+			y_velocity = -12 * (rnd() + 0.25),
+			timer = rnd(10),
+			radius = i
+		}
+		
+		add(bg.bubbles, new_bubble)
+	end
+	
+	return bg
+end
+
+function BGBubbles:update()
+	self.timer += Util.time_delta
+	
+	for bubble in all(self.bubbles) do
+		bubble.timer += Util.time_delta
+		bubble.x += math.sin(bubble.timer * 0.5) * bubble.x_velocity * Util.time_delta
+		bubble.y += bubble.y_velocity * Util.time_delta
+		
+		if bubble.x < -bubble.radius then
+			bubble.x += 479 + bubble.radius * 2
+		elseif bubble.x > 480 + bubble.radius then
+			bubble.x -= 479 + bubble.radius * 2
+		end
+		
+		if bubble.y < -bubble.radius then
+			bubble.y = 270 + bubble.radius
+		end
+	end
+end
+
+function BGBubbles:draw(theme)
+	cls(theme.back2)
+	
+	for bubble in all(self.bubbles) do
+		circfill(bubble.x, bubble.y, bubble.radius, theme.back1)
+	end
+end
+
+return BGBubbles
+
+:: src/bg/picotron.lua
+--[[pod_format="raw",created="2025-12-08 21:28:13",modified="2025-12-14 00:35:09",revision=37,xstickers={}]]
+
+local Class = require("src/class")
+local Util = require("src/util")
+
+local BGPicotron = Class.class {
+	name = "Picotron",
+	config_name = "picotron",
+	timer = 0
+}
+
+function BGPicotron.new()
+	return BGPicotron:new_obj()
+end
+
+function BGPicotron:update()
+	self.timer += Util.time_delta
+	
+	if self.timer >= 16 then
+		self.timer -= 16
+	end
+end
+
+function BGPicotron:draw(theme)
+	cls(theme.back2)
+	
+	local sprite = get_spr(513)
+	local max_scroll = math.min(sprite:width(), sprite:height())
+	
+	pal(7, theme.back1)
+	camera(self.timer * 8 % max_scroll, self.timer * 8 % max_scroll)
+
+	local tile_x = math.ceil(480 / sprite:width()) + 1
+	local tile_y = math.ceil(270 / sprite:height()) + 1
+	
+	for y = 0, tile_y - 1 do
+		for x = 0, tile_x - 1 do
+			spr(513, x * sprite:width(), y * sprite:height())
+		end
+	end
+	
+	pal()
+	camera()
+end
+
+return BGPicotron
+
+:: src/category.lua
+--[[pod_format="raw",created="2025-12-13 20:19:25",modified="2025-12-14 02:26:20",revision=26,xstickers={}]]
+
+local Class = require("src/class")
+local Config = require("src/config")
+local Util = require("src/util")
+
+local _default_icons = {
+	folder = 2,
+	cart = 3,
+	file = 4,
+	loc = 5
+}
+
+local Category = Class.class()
+
+function Category.new(name, path, include_folders)
+	local category = Category:new_obj {
+		name = name,
+		path = path,
+		include_folders = include_folders,
+		items = {},
+		populated = false
+	}
+
+	return category
+end
+
+function Category:populate()
+	if self.populated then return end
+	
+	Util.log("Start populate: " .. stat(1))
+	
+	local dir_list = ls(self.path)
+	
+	Util.log("After ls: " .. stat(1))
+	
+	for dir_item in all(dir_list) do
+		local full_path = self.path .. "/" .. dir_item
+		local start_path = full_path
+		local new_item_type = Util.os_item_type(full_path)
+		
+		if new_item_type == "loc" then
+			full_path = Util.follow_loc_file(full_path)
+			new_item_type = Util.os_item_type(full_path)
+		end
+		
+		if self.include_folders or new_item_type ~= "folder" then
+			local metadata = fetch_metadata(start_path)
+
+			if metadata then
+				local new_name = dir_item
+				
+				if metadata.title and #metadata.title > 0 then
+					new_name = metadata.title
+				end
+				
+				local default_icon = _default_icons[new_item_type] or 1
+				
+				local item = {
+					name = new_name,
+					icon = metadata.icon or default_icon,
+					lowcolor = metadata.lowcol_icon or not metadata.icon,
+					item_type = new_item_type,
+					sort_key = tostring(default_icon) .. "_" .. string.lower(new_name),
+					path = full_path
+				}
+				
+				add(self.items, item)
+			end
+		end
+	end
+	
+	Util.log("After read dir list: " .. stat(1))
+	
+	sort(self.items, "sort_key")
+	
+	Util.log("After sort: " .. stat(1))
+	
+	self.populated = true
+end
+
+return Category
+
+:: src/class.lua
+--[[pod_format="raw",created="2025-12-13 22:24:34",modified="2025-12-14 00:39:50",revision=11,xstickers={}]]
+
+local Class = {}
+
+function Class.class(class_obj)
+	class_obj = class_obj or {}
+	
+	class_obj.new_obj = function(self, obj)
+		obj = obj or {}
+		
+		self.__index = self
+		return setmetatable(obj, self)
+	end
+	
+	return class_obj
+end
+
+function Class.super(class_obj)
+	local meta = getmetatable(class_obj) or {}
+	
+	return meta.__index
+end
+
+return Class
+
+:: src/colormap.lua
+--[[pod_format="raw",created="2025-12-04 18:44:01",modified="2025-12-10 20:11:19",revision=158,xstickers={}]]
+
+-- Table from OS icon.lua
+local _to_lowcolor = {
+	1, 1, 13, 13, 1, 6, 7,
+	13, 6, 6, 6, 6, 13, 6, 6,
+	13, 13, 13, 1, 1, 1, 13, 6,
+	13, 13, 6, 13, 6, 6, 13, 13
+}
+
+local _lowcolor_to_theme = {
+	[7] = "icon0",
+	[6] = "icon1",
+	[13] = "icon2",
+	[1] = "icon3"
+}
+
+local _pico_pal_colors = {
+	gray = {
+		main = 6,
+		dark = 13,
+		darker = 1,
+		light = 7,
+		tint = 7,
+		input = 7
+	},
+	black = {
+		main = 1,
+		dark = 0,
+		darker = 0,
+		light = 5,
+		tint = 6,
+		input = 6
+	},
+	red = {
+		main = 8,
+		dark = 24,
+		darker = 2,
+		light = 23,
+		tint = 23,
+		input = 7
+	},
+	orange = {
+		main = 9,
+		dark = 25,
+		darker = 4,
+		light = 15,
+		tint = 15,
+		input = 7
+	},
+	green = {
+		main = 27,
+		dark = 3,
+		darker = 19,
+		light = 26,
+		tint = 26,
+		input = 7
+	},
+	blue = {
+		main = 12,
+		dark = 16,
+		darker = 1,
+		light = 28,
+		tint = 28,
+		input = 7
+	},
+	purple = {
+		main = 13,
+		dark = 18,
+		darker = 1,
+		light = 6,
+		tint = 6,
+		input = 7
+	},
+	pink = {
+		main = 14,
+		dark = 30,
+		darker = 2,
+		light = 23,
+		tint = 23,
+		input = 7
+	}
+}
+
+local _color_to_flavor = {
+	"black", "black", "red", "green",		-- 0-3
+	"orange", "gray", "gray", "gray",	-- 4-7
+	"red", "orange", "orange", "green",	-- 8-11
+	"blue", "purple", "pink", "orange",	-- 12-15
+	"blue", "blue", "purple", "green",	-- 16-19
+	"orange", "black", "gray", "pink",	-- 20-23
+	"red", "orange", "green", "green",	-- 24-27
+	"blue", "purple", "pink", "orange",	-- 28-31
+}
+
+local _color_table = get_spr(256)
+
+local Colormap = {}
+
+function Colormap.init()
+	Colormap.apply_flavor("gray")
+end
+
+function Colormap.apply_flavor(flavor)
+	local palette = fetch("pal/" .. flavor .. ".pal")
+	
+	if palette then palette:poke(0x5000) end
+end
+
+function Colormap.color_to_flavor(col)
+	return _color_to_flavor[col + 1]
+end
+
+function Colormap.picotron_colors(flavor)
+	return _pico_pal_colors[flavor] or _pico_pal_colors["gray"]
+end
+
+function Colormap.lowcolor_pal(os_theme)
+	pal()
+	
+	-- Should find a way to do this without clobbering the palette
+	for i = 1, 31 do
+		pal(i, os_theme[_lowcolor_to_theme[_to_lowcolor[i]]])
+	end
+	
+	-- Grab the resulting color table
+	local pal_data = userdata("u8", 4096)
+	pal_data:peek(0x8000)
+	
+	pal()
+	
+	return pal_data
+end
+
+function Colormap.draw_with_table(color_table, draw_func)
+	memmap(color_table, 0x8000)
+	poke(0x550b, 0x3f) -- Needed to make shape blending work
+	draw_func()
+	poke(0x550b, 0) -- To speed up drawing
+	unmap(color_table)
+end
+
+function Colormap.draw_blended(draw_func)
+	Colormap.draw_with_table(_color_table, draw_func)
+end
+
+return Colormap
+
+:: src/config.lua
+--[[pod_format="raw",created="2025-12-03 23:08:28",modified="2025-12-14 02:23:44",revision=55,xstickers={}]]
+
+local Util = require("src/util")
+
+local _save_dir = "/appdata/springloader"
+local _save_path = _save_dir .. "/config.pod"
+
+local _default_config = {
+	_config_version = 1,
+	app_folder = Util.is_web_player() and "/system" or "/desktop/apps",
+	view = "auto_tiles",
+	background = "bubbles",
+	color_theme = "os",
+	picotron_colors = false,
+	color_blending = true,
+	reduced_motion = false,
+	sound = true,
+	last_categories = {}
+}
+
+local Config = {
+	current = {}
+}
+
+function Config.load()
+	local fetched = fetch(_save_path)
+	local modified = false
+	
+	if not fetched then
+		fetched = _default_config
+		modified = true
+	else
+		-- Add any new config keys so tinkerers can see them in podtree
+		for k, v in pairs(_default_config) do
+			if fetched[k] == nil then
+				fetched[k] = v
+				modified = true
+			end
+		end
+	end
+	
+	if modified then Config.save(fetched) end
+	
+	return fetched
+end
+
+function Config.save(config)
+	mkdir(_save_dir)
+	store(_save_path, config)
+end
+
+function Config:load_current()
+	self.current = Config.load()
+end
+
+function Config:save_current()
+	Config.save(self.current)
+end
+
+return Config
+
+:: src/draw.lua
+--[[pod_format="raw",created="2025-12-07 23:50:00",modified="2025-12-13 01:37:25",revision=120,xstickers={}]]
+
+local Colormap = require("src/colormap")
+local Text = require("src/text")
+
+local Draw = {}
+
+function Draw.blended_rrect(x, y, width, height, col)
+	if col >= 60 or col == 0 then
+		Colormap.draw_blended(function()
+			rrect(x, y, width, height, 2, col)
+		end)
+	else
+		rrect(x, y, width, height, 2, col)
+	end
+end
+
+function Draw.blended_rrect_fill(x, y, width, height, col)
+	if col >= 60 or col == 0 then
+		Colormap.draw_blended(function()
+			rrectfill(x, y, width, height, 2, col)
+		end)
+	else
+		rrectfill(x, y, width, height, 2, col)
+	end
+end
+
+function Draw.border_rrect(x, y, width, height, col, bord_col)
+	if col ~= nil then
+		Draw.blended_rrect_fill(x, y, width, height, col)
+	end
+	if bord_col ~= nil then
+		Draw.blended_rrect(x, y, width, height, bord_col)
+	end
+end
+
+-- Args:
+--  x: number,
+--  y: number,
+--  width: number?,
+--  height: number?,
+--  center_x: bool?,
+--  fg_col: number,
+--  bg_col: number?,
+--  bord_col: number?,
+--  shad_col: number?,
+--  small_font: bool?
+function Draw.label(text, args)
+	local x = args.x or 0
+	local y = args.y or 0
+	
+	local label_text = text
+	
+	if args.small_font then
+		label_text = "\014" .. text
+	end
+	
+	if args.bg_col ~= nil or args.bord_col ~= nil then
+		local text_width = Text.calculate_width(text, args.small_font)
+		local width = args.width or text_width + 10
+		local height = args.height or (args.small_font and 11 or 13)
+		
+		Draw.border_rrect(x, y, width, height, args.bg_col, args.bord_col)
+		
+		if args.center_x then
+			x += math.max(0, (width - text_width - 10) / 2)
+		end
+		
+		x += 4
+		y += 3
+	end
+	
+	if args.shad_col ~= nil then
+		print(label_text, x, y - 1, args.shad_col)
+	end
+	print(label_text, x, y, args.fg_col)
+end
+
+-- Args:
+--  x: number,
+--  y: number,
+--  width: number,
+--  max_lines: number,
+--  auto_wrap: bool?,
+--  center_x: bool?,
+--  center_y: bool?,
+--  fg_col: number,
+--  bg_col: number?,
+--  bord_col: number?,
+--  shad_color: number?,
+--  small_font: bool?
+function Draw.label_multiline(text, args)
+	local start_x = args.x or 0
+	local start_y = args.y or 0
+	local line_height = args.small_font and 8 or 10
+	local lines = text
+	
+	if type(lines) ~= "table" then
+		lines = Text.split_lines(text, args.auto_wrap and args.width or 0, args.small_font)
+	end
+	
+	local num_lines = min(#lines, args.max_lines or #lines)
+	local box_width = Text.calculate_width_multiline(lines, args.small_font)
+	local box_height = line_height * num_lines
+	local has_rect = args.bg_col ~= nil or args.bord_col ~= nil
+	
+	if has_rect then
+		start_x += 4
+		start_y += 3
+		box_width += 8
+		box_height += 3
+	end
+	
+	if args.center_x then
+		start_x -= box_width / 2
+	end
+	if args.center_y then
+		start_y -= box_height / 2
+	end
+	
+	if has_rect then
+		Draw.border_rrect(start_x - 4, start_y - 3, box_width, box_height, args.bg_col, args.bord_col)
+	end
+	
+	for i = 1, num_lines do
+		local line = lines[i]
+		
+		if i == num_lines and #lines > num_lines then
+			line = sub(line, 0, -3) .. "..."
+		end
+		
+		Draw.label(line, {
+			x = start_x,
+			y = start_y + (i - 1) * line_height,
+			fg_col = args.fg_col,
+			shad_color = args.shad_color,
+			small_font = args.small_font
+		})
+	end
+end
+
+return Draw
+
+:: src/gui/button.lua
+--[[pod_format="raw",created="2025-12-09 18:29:08",modified="2025-12-11 20:58:42",revision=43,xstickers={}]]
+
+local Draw = require("src/draw")
+local Sfx = require("src/sfx")
+local Text = require("src/text")
+
+local GuiButton = {}
+
+-- Args:
+--  x: number,
+--  y: number,
+--  label: string,
+--  width: number?,
+--  center_x: bool?
+--  cursor: number/string?
+--  theme: table,
+--  update: func callback,
+--  tap: func callback,
+function GuiButton.new(parent, args)
+	local text = args.label or "???"
+	local width = args.width or Text.calculate_width(text) + 10
+	local center_x = args.center_x
+	
+	if center_x == nil then
+		center_x = true
+	end
+
+	return parent:attach {
+		x = args.x or 0,
+		y = args.y or 0,
+		label = args.label,
+		width = width,
+		height = 14,
+		center_x = center_x,
+		is_active = args.is_active,
+		cursor = args.cursor or "pointer",
+		theme = args.theme,
+		click = function(widget)
+			Sfx.sfx_polite(4)
+		end,
+		tap = args.tap,
+		update = args.update,
+		draw = function(widget, msg)
+			local y_offset = (msg.mb > 0 and msg.has_pointer) and 1 or 0
+			local bg_col = widget.theme.button
+			local fg_col = widget.theme.button_text
+			local bord_col = nil
+			
+			if msg.has_pointer or widget.checked then
+				bg_col >>= 8
+				fg_col >>= 8
+				bord_col = widget.theme.button
+			end
+			
+			Draw.label(widget.label, {
+				x = 0,
+				y = y_offset,
+				width = widget.width,
+				height = widget.height - 1,
+				center_x = widget.center_x,
+				fg_col = fg_col,
+				bg_col = bg_col,
+				bord_col = bord_col
+			})
+		end
+	}
+end
+
+return GuiButton
+
+:: src/gui/category_pane.lua
+--[[pod_format="raw",created="2025-12-05 18:37:19",modified="2025-12-11 21:01:05",revision=91,xstickers={}]]
+
+local Colormap = require("src/colormap")
+local Draw = require("src/draw")
+local Util = require("src/util")
+
+local GuiButton = require("src/gui/button")
+
+local GuiCategoryPane = {}
+
+-- Args:
+--  x: number,
+--  y: number,
+--  width: number,
+--  height: number,
+--  categories: table,
+--  active_categories: table,
+--  theme: table,
+--  activate_category: func(string) callback
+function GuiCategoryPane.new(parent, args)
+	local pane = parent:attach {
+		x = args.x,
+		y = args.y,
+		width = args.width,
+		height = args.height,
+		user_args = args
+	}
+	
+	local scroll_container = pane:attach {
+		x = 0,
+		y = 0,
+		width = pane.width,
+		height = pane.height
+	}
+	
+	local scrollable = scroll_container:attach {
+		x = 0,
+		y = 0,
+		width = scroll_container.width,
+		height = 18 * #args.categories
+	}
+	
+	local need_scroll = scrollable.height > scroll_container.height
+	local category_width = need_scroll and scrollable.width - 10 or scrollable.width
+	local category_y = 0
+	
+	for category in all(args.categories) do
+		local button = GuiButton.new(scrollable, {
+			x = 0,
+			y = category_y,
+			width = category_width,
+			label = category.name,
+			theme = args.theme,
+			update = function(widget)
+				-- GUI processes every item even if it's out of view,
+				--  so we need to optimize where we can
+				-- TODO: virtualize items so only those in view are in the GUI tree
+				widget.hidden = scrollable.y + widget.height < -widget.y or scrollable.y - scroll_container.height > -widget.y
+				
+				if not widget.hidden then
+					widget.checked = Util.in_array(args.active_categories, category.name)
+				end
+			end,
+			tap = function(widget)
+				args.activate_category(category.name)
+			end
+		})
+		
+		category_y += 18
+	end
+	
+	if need_scroll then
+		scroll_container:attach_scrollbars()
+	end
+	
+	return pane
+end
+
+return GuiCategoryPane
+
+:: src/gui/category_view.lua
+--[[pod_format="raw",created="2025-12-05 19:05:07",modified="2025-12-13 22:39:08",revision=242,xstickers={}]]
+
+local Draw = require("src/draw")
+local Util = require("src/util")
+
+local GuiButton = require("src/gui/button")
+local GuiLauncher = require("src/gui/launcher")
+local GuiLaunchedItem = require("src/gui/launched_item")
+
+local _scrollbar_width = 8
+local _list_padding = 4
+local _grid_column_min_width = 120
+local _grid_column_spacing = 4
+
+local GuiCategoryView = {}
+
+-- Args:
+--  x: number,
+--  y: number,
+--  width: number,
+--  height: number,
+--  big_icons: bool,
+--  grid_layout: bool,
+--  category: table,
+--  theme: table,
+function GuiCategoryView.new(parent, args)
+	args.category:populate()
+
+	local container = parent:attach {
+		x = args.x,
+		y = args.y,
+		width = args.width,
+		height = args.height,
+		draw = function(widget)
+			Draw.border_rrect(0, 16, widget.width, widget.height - 16, args.theme.list, args.theme.list_border)
+		end
+	}
+	
+	GuiButton.new(container, {
+		x = 0,
+		y = 0,
+		label = args.category.name,
+		theme = args.theme,
+		tap = function(widget)
+			Util.os_open_folder(args.category.path)
+		end
+	})
+	
+	local scroll_container = container:attach {
+		x = _list_padding,
+		y = 16 + _list_padding,
+		width = container.width - _list_padding * 2,
+		height = container.height - 16 - _list_padding * 2
+	}
+	
+	local scrollable = scroll_container:attach {
+		x = 0,
+		y = 0,
+		width = scroll_container.width,
+		big_icons = args.big_icons,
+		grid_layout = args.grid_layout,
+		category = args.category,
+		theme = args.theme,
+		launch_cooldown = 0,
+		update = function(widget)
+			GuiCategoryView._check_recycle(widget)
+			
+			widget.launch_cooldown = math.max(0, widget.launch_cooldown - Util.time_delta)
+		end,
+	}
+	
+	GuiCategoryView._reflow(scrollable)
+	
+	scroll_container:attach_scrollbars { autohide = true }
+	
+	return container
+end
+
+function GuiCategoryView._reflow(widget)
+	widget.icon_size = widget.big_icons and 32 or 16
+	widget.row_spacing = widget.big_icons and 4 or 1
+	widget.row_height = widget.icon_size + 4 + widget.row_spacing
+
+	widget.columns = widget.grid_layout and math.floor(widget.parent.width / _grid_column_min_width) or 1
+	widget.item_width = math.floor((widget.parent.width - _scrollbar_width - ((widget.columns - 1) * _grid_column_spacing)) / widget.columns)
+	widget.row_count = math.ceil(#widget.category.items / widget.columns)
+	widget.height = widget.row_height * widget.row_count - widget.row_spacing
+	
+	widget._recycler = {
+		y = 0,
+		row_start = -1,
+		row_end = -2,
+		rows = {}
+	}
+	
+	for launcher in all(widget.child) do
+		launcher:detach()
+	end
+	
+	GuiCategoryView._recycle(widget)
+end
+
+function GuiCategoryView._check_recycle(widget)
+	if widget._recycler.y ~= widget.y then
+		GuiCategoryView._recycle(widget)
+	end
+end
+
+function GuiCategoryView._recycle(widget)
+	widget._recycler.y = widget.y
+	
+	-- We need to get the diffs between the old and new row ranges.
+	--  Then we need to remove any rows that scrolled out of view,
+	--  and add any rows that scrolled in,
+	--  without touching any unnecessary rows.
+	
+	local new_row_start = math.floor(-widget.y / widget.row_height)
+	local new_row_end = new_row_start + math.ceil(widget.parent.height / widget.row_height)
+	
+	if new_row_start < widget._recycler.row_start then
+		-- Start expanded on -y
+		local add_end = math.min(widget._recycler.row_start - 1, new_row_end)
+		
+		GuiCategoryView._repopulate(widget, new_row_start, add_end)
+	elseif new_row_start > widget._recycler.row_start then
+		-- Start shrank on +y
+		local remove_end = math.min(new_row_start - 1, widget._recycler.row_end)
+		
+		GuiCategoryView._remove_rows(widget, widget._recycler.row_start, remove_end)
+	end
+	
+	if new_row_end > widget._recycler.row_end then
+		-- End expanded on +y
+		local add_start = math.max(widget._recycler.row_end + 1, new_row_start)
+		
+		GuiCategoryView._repopulate(widget, add_start, new_row_end)
+	elseif new_row_end < widget._recycler.row_end then
+		-- End shrank on -y
+		local remove_start = math.max(new_row_end + 1, widget._recycler.row_start)
+		
+		GuiCategoryView._remove_rows(widget, remove_start, widget._recycler.row_end)
+	end
+	
+	widget._recycler.row_start = new_row_start
+	widget._recycler.row_end = new_row_end
+end
+
+function GuiCategoryView._remove_rows(widget, row_start, row_end)
+	for i = row_start, row_end do
+		local row_launchers = widget._recycler.rows[i]
+		
+		if row_launchers then
+			for launcher in all(row_launchers) do
+				launcher:detach()
+			end
+		else
+			Util.log("Uh oh, tried to remove a row that doesn't exist! " .. i)
+		end
+		
+		widget._recycler.rows[i] = nil
+	end
+end
+
+function GuiCategoryView._repopulate(widget, row_start, row_end)
+	-- Spawn in any new rows.
+	
+	for row = row_start, row_end do
+		if widget._recycler.rows[row] then
+			Util.log("Uh oh, tried to repopulate a row that already exists! " .. row)
+			GuiCategoryView._remove_rows(widget, row, row)
+		end
+		
+		widget._recycler.rows[row] = {}
+	end
+	
+	row_start = row_start or 0
+	row_end = row_end or widget.row_count - 1
+	
+	if row_end < row_start then return end
+	
+	local row = row_start
+	local item_y = row_start * widget.row_height
+	local column = 0
+	local column_width = widget.item_width + _grid_column_spacing
+	
+	local item_start = row_start * widget.columns + 1
+	local item_end = math.min((row_end + 1) * widget.columns, #widget.category.items)
+	
+	for i = item_start, item_end do
+		local item = widget.category.items[i]
+		local item_x = column_width * column
+		
+		local launcher = GuiCategoryView._make_launcher(widget, item_x, item_y, item)
+		
+		widget._recycler.rows[row] = widget._recycler.rows[row] or {}
+		add(widget._recycler.rows[row], launcher)
+		
+		column += 1
+		
+		if column >= widget.columns then
+			column = 0
+			row += 1
+			item_y += widget.row_height
+		end
+	end
+end
+
+function GuiCategoryView._make_launcher(widget, x, y, item)
+	return GuiLauncher.new(widget, {
+		x = x,
+		y = y,
+		width = widget.item_width,
+		icon_size = widget.icon_size,
+		item = item,
+		theme = widget.theme,
+		launched = function(launcher)
+			if widget.launch_cooldown <= 0 then
+				widget.launch_cooldown = 2
+				GuiLaunchedItem.new(widget, launcher)
+			end
+		end
+	})
+end
+
+return GuiCategoryView
+
+:: src/gui/folder_chooser.lua
+--[[pod_format="raw",created="2025-12-06 23:41:04",modified="2025-12-13 23:39:16",revision=36,xstickers={}]]
+
+local Util = require("src/util")
+
+local GuiButton = require("src/gui/button")
+
+local GuiFolderChooser = {}
+
+-- Args:
+--  x: number,
+--  y: number,
+--  app_folder: string,
+--  theme: table,
+--  set_app_folder: func(string) callback
+function GuiFolderChooser.new(parent, args)
+	local chooser = parent:attach {
+		x = args.x,
+		y = args.y,
+		width = 230,
+		height = 28,
+		user_args = args
+	}
+	
+	GuiFolderChooser._populate_main(chooser)
+	
+	return chooser
+end
+
+function GuiFolderChooser._populate_main(chooser)
+	for i = #chooser.child, 1, -1 do
+		chooser.child[i]:detach()
+	end
+
+	local path_title = GuiButton.new(chooser, {
+		x = 4,
+		y = 4,
+		width = 150,
+		height = 14,
+		label = chooser.user_args.app_folder,
+		theme = chooser.user_args.theme,
+		tap = function(widget)
+			Util.os_open_folder(chooser.user_args.app_folder)
+		end
+	})
+	
+	GuiButton.new(chooser, {
+		x = 6 + path_title.width,
+		y = 4,
+		height = 14,
+		label = "Change...",
+		theme = chooser.user_args.theme,
+		tap = function(widget)
+			GuiFolderChooser._populate_edit(chooser)
+		end
+	})
+end
+
+function GuiFolderChooser._populate_edit(chooser)
+	for i = #chooser.child, 1, -1 do
+		chooser.child[i]:detach()
+	end
+
+	local input_folder = chooser:attach_text_editor {
+		x = 4,
+		y = 4,
+		width = 160,
+		height = 13,
+		bgcol = chooser.user_args.theme.input_bg,
+		fgcol = chooser.user_args.theme.input_fg,
+		curcol = chooser.user_args.theme.input_select,
+		selcol = chooser.user_args.theme.input_select,
+		max_lines = 1,
+		markup = false,
+		key_callback = {
+			enter = function(widget)
+				local app_folder = widget:get_text()[1]
+				
+				GuiFolderChooser._populate_main(chooser)
+				chooser.user_args.set_app_folder(app_folder)
+			end
+		}
+	}
+	
+	input_folder:set_text(chooser.user_args.app_folder)
+	
+	GuiButton.new(chooser, {
+		x = 6 + input_folder.width,
+		y = 4,
+		height = 14,
+		label = "Apply",
+		theme = chooser.user_args.theme,
+		tap = function(widget)
+			input_folder.key_callback.enter(input_folder)
+		end
+	})
+end
+
+return GuiFolderChooser
+
+:: src/gui/header.lua
+--[[pod_format="raw",created="2025-12-05 17:08:05",modified="2025-12-11 19:03:37",revision=264,xstickers={}]]
+
+local Draw = require("src/draw")
+local Util = require("src/util")
+
+local GuiFolderChooser = require("src/gui/folder_chooser")
+local GuiIconButton = require("src/gui/icon_button")
+local GuiPopupMenu = require("src/gui/popup_menu")
+
+local _color_theme_items = {
+	{ name = "Use OS Theme", config_name = "os" },
+	{ name = "Gray", config_name = "gray" },
+	{ name = "Black", config_name = "black" },
+	{ name = "Red", config_name = "red" },
+	{ name = "Orange", config_name = "orange" },
+	{ name = "Green", config_name = "green" },
+	{ name = "Blue", config_name = "blue" },
+	{ name = "Purple", config_name = "purple" },
+	{ name = "Pink", config_name = "pink" }
+}
+
+local _settings_items = {
+	{ name = "Picotron Colors", config_name = "picotron_colors" },
+	{ name = "Color Blending", config_name = "color_blending" },
+	{ name = "Reduced Motion", config_name = "reduced_motion" },
+	{ name = "Sound", config_name = "sound" }
+}
+
+local GuiHeader = {}
+
+-- Args:
+--  x: number,
+--  y: number,
+--  current_config: table,
+--  theme: table,
+--  plugins: table,
+--  set_config_option: func(string, string) callback
+function GuiHeader.new(parent, args)
+	local header = parent:attach {
+		x = args.x,
+		y = args.y,
+		width = get_display():width() - args.x * 2,
+		height = 28,
+		draw = function(widget)
+			Draw.label("Springloader", {
+				x = 410,
+				y = 4,
+				width = 66,
+				height = 24,
+				fg_col = args.theme.text_tint,
+				bg_col = args.theme.back_dark,
+				shad_col = args.theme.back_shadow
+			})
+			Draw.label("APP LAUNCHER", {
+				x = 419,
+				y = 19,
+				fg_col = args.theme.text_tint,
+				shad_col = args.theme.back_shadow,
+				small_font = true
+			})
+		end,
+		user_args = args
+	}
+	
+	GuiFolderChooser.new(header, {
+		x = 0,
+		y = 0,
+		app_folder = args.current_config.app_folder,
+		theme = args.theme,
+		set_app_folder = function(app_folder)
+			args.set_config_option("app_folder", app_folder)
+		end
+	})
+	
+	GuiHeader._make_view_button(header)
+	GuiHeader._make_theme_button(header)
+	GuiHeader._make_bg_button(header)
+	GuiHeader._make_settings_button(header)
+	
+	return header
+end
+
+function GuiHeader._make_view_button(header)
+	local selected = header.user_args.current_config.view
+	local menu_items = {}
+
+	for view in all(header.user_args.plugins.views) do
+		add(menu_items, {
+			label = Util.checkmark_text(view.name, view.config_name == selected),
+			action = function()
+				header.user_args.set_config_option("view", view.config_name)
+			end
+		})
+	end
+	
+	GuiIconButton.new(header, {
+		x = 224,
+		y = 4,
+		icon = "\^:0018669999661800",
+		theme = header.user_args.theme,
+		tap = function(widget)
+			GuiPopupMenu.new(widget, {
+				items = menu_items
+			})
+		end
+	})
+end
+
+function GuiHeader._make_theme_button(header)
+	local selected = header.user_args.current_config.color_theme
+	local menu_items = {}
+
+	for item in all(_color_theme_items) do
+		add(menu_items, {
+			label = Util.checkmark_text(item.name, item.config_name == selected),
+			action = function()
+				header.user_args.set_config_option("color_theme", item.config_name)
+			end
+		})
+	end
+	
+	GuiIconButton.new(header, {
+		x = 242,
+		y = 4,
+		icon = "\^:502c568345291000",
+		theme = header.user_args.theme,
+		tap = function(widget)
+			GuiPopupMenu.new(widget, {
+				items = menu_items
+			})
+		end
+	})
+end
+
+function GuiHeader._make_bg_button(header)
+	local selected = header.user_args.current_config.background
+	local menu_items = {}
+
+	for background in all(header.user_args.plugins.backgrounds) do
+		add(menu_items, {
+			label = Util.checkmark_text(background.name, background.config_name == selected),
+			action = function()
+				header.user_args.set_config_option("background", background.config_name)
+			end
+		})
+	end
+	
+	GuiIconButton.new(header, {
+		x = 260,
+		y = 4,
+		icon = "\^:007672700e4e6e00",
+		theme = header.user_args.theme,
+		tap = function(widget)
+			GuiPopupMenu.new(widget, {
+				items = menu_items
+			})
+		end
+	})
+end
+
+function GuiHeader._make_settings_button(header)
+	local config = header.user_args.current_config
+	local menu_items = {}
+	
+	for item in all(_settings_items) do
+		local selected = config[item.config_name]
+		
+		add(menu_items, {
+			label = Util.checkmark_text(item.name, selected),
+			action = function()
+				header.user_args.set_config_option(item.config_name, not selected)
+			end
+		})
+	end
+
+	GuiIconButton.new(header, {
+		x = 278,
+		y = 4,
+		icon = "\^:60ff600006ff0600",
+		theme = header.user_args.theme,
+		tap = function(widget)
+			GuiPopupMenu.new(widget, {
+				items = menu_items
+			})
+		end
+	})
+end
+
+return GuiHeader
+
+:: src/gui/icon_button.lua
+--[[pod_format="raw",created="2025-12-07 00:03:46",modified="2025-12-09 19:02:11",revision=21,xstickers={}]]
+
+local Draw = require("src/draw")
+
+local GuiButton = require("src/gui/button")
+
+local GuiIconButton = {}
+
+-- Args:
+--  x: number,
+--  y: number,
+--  icon: string,
+--  cursor: number/string?
+--  theme: table,
+--  tap: func callback,
+function GuiIconButton.new(parent, args)
+	return GuiButton.new(parent, {
+		x = args.x or 0,
+		y = args.y or 0,
+		label = args.icon or "\^:0000241818240000",
+		width = 16,
+		height = 14,
+		center_x = false,
+		theme = args.theme,
+		tap = args.tap
+	})
+end
+
+return GuiIconButton
+
+:: src/gui/launched_item.lua
+--[[pod_format="raw",created="2025-12-10 23:04:01",modified="2025-12-11 21:00:20",revision=56,xstickers={}]]
+
+local Pattern = require("src/pattern")
+local Sfx = require("src/sfx")
+local Util = require("src/util")
+
+local GuiLaunchedItem = {}
+
+function GuiLaunchedItem.new(parent, launcher)
+	local capture = userdata(u8, launcher.width, launcher.height)
+	
+	set_draw_target(capture)
+	camera()
+	clip()
+	
+	launcher:draw({
+		has_pointer = false,
+		mb = 0
+	})
+	
+	set_draw_target()
+	
+	Sfx.sfx_polite(5)
+	
+	return parent:attach {
+		x = launcher.x + 1,
+		y = launcher.y,
+		width = launcher.width,
+		height = launcher.height,
+		ghost = true,
+		capture = capture,
+		center_x = launcher.icon_size / 2 + 2,
+		timer = 0,
+		launched_yet = false,
+		path = launcher.item.path,
+		update = function(widget)
+			widget.timer += Util.time_delta * 4
+			
+			if widget.timer >= 1 and not widget.launched_yet then
+				widget.launched_yet = true
+				Util.os_launch(widget.path)
+				
+				widget:detach()
+			end
+		end,
+		draw = function(widget)
+			local lerp = math.sin(widget.timer * math.pi / 2)
+			local width = widget.capture:width()
+			local height = widget.capture:height()
+			local scaled_width = width * (lerp + 1)
+			local scaled_height = height * (lerp + 1)
+			local offset_x = -widget.center_x * lerp
+			local offset_y = (height - scaled_height) / 2
+			
+			clip()
+			Pattern.set_screen_door(widget.timer)
+			sspr(widget.capture, 0, 0, width, height, offset_x, offset_y, scaled_width, scaled_height)
+			fillp()
+		end
+	}
+end
+
+return GuiLaunchedItem
+
+:: src/gui/launcher.lua
+--[[pod_format="raw",created="2025-12-09 22:13:50",modified="2025-12-13 01:54:35",revision=116,xstickers={}]]
+
+local Colormap = require("src/colormap")
+local Draw = require("src/draw")
+local Sfx = require("src/sfx")
+local Text = require("src/text")
+local Util = require("src/util")
+
+local GuiPopupMenu = require("src/gui/popup_menu")
+
+local GuiLauncher = {}
+
+-- Args:
+--  x: number,
+--  y: number,
+--  width: number,
+--  icon_size: number,
+--  item: table,
+--  theme: table,
+--  launched: func(self) callback
+function GuiLauncher.new(parent, args)
+	local container = parent.parent
+	
+	return parent:attach {
+		x = args.x or 0,
+		y = args.y or 0,
+		width = args.width or 100,
+		height = args.icon_size + 4,
+		item = args.item,
+		icon_size = args.icon_size,
+		theme = args.theme,
+		cursor = "pointer",
+		last_mb = 0,
+		launched = args.launched,
+		cache_label = function(widget)
+			widget.cached = widget.cached or {}
+			local cached = widget.cached
+			
+			local label_width = widget.width - widget.icon_size - 8
+			cached.max_lines = widget.icon_size > 16 and 3 or 1
+			
+			cached.wrapped = Text.split_lines(widget.item.name, label_width, false)
+			local width = Text.calculate_width_multiline(cached.wrapped)
+			
+			if #cached.wrapped > cached.max_lines or width > label_width then
+				cached.max_lines += 1
+				cached.wrapped = Text.split_lines(widget.item.name, label_width, true)
+				cached.small_font = true
+			else
+				cached.small_font = false
+			end
+		end,
+		draw_icon_raw = function(widget, x, y)
+			sspr(widget.item.icon or 1, 0, 0, 16, 16, x, y, widget.icon_size, widget.icon_size)
+		end,
+		draw = function(widget, msg)
+			if not widget.cached then
+				widget:cache_label()
+			end
+			
+			local big_icons = widget.icon_size > 16
+			local offset = big_icons and 2 or 1
+			local x_offset = msg.has_pointer and offset or 0
+			local y_offset = (msg.mb > 0 and msg.has_pointer) and offset or 0
+			local label_width = widget.width - widget.icon_size - 8
+			
+			if msg.has_pointer then
+				Draw.border_rrect(0, 0, widget.width, widget.height, widget.theme.tile_hover)
+			end
+			
+			if widget.item.lowcolor or widget.theme.force_lowcolor then
+				Colormap.draw_with_table(widget.theme.lowcolor_pal, function() widget:draw_icon_raw(x_offset + 2, y_offset + 2) end)
+			else
+				widget:draw_icon_raw(x_offset + 2, y_offset + 2)
+			end
+			
+			Draw.label_multiline(widget.cached.wrapped, {
+				x = widget.icon_size + x_offset + 4,
+				y = widget.height / 2 + y_offset,
+				width = label_width,
+				max_lines = widget.cached.max_lines,
+				center_y = true,
+				fg_col = widget.theme.text,
+				bg_col = msg.has_pointer and widget.theme.tile_hover or widget.theme.label,
+				small_font = widget.cached.small_font
+			})
+		end,
+		click = function(widget, msg)
+			widget.last_mb = msg.mb
+			Sfx.sfx_polite(4)
+		end,
+		tap = function(widget, msg)
+			if widget.last_mb == 1 then
+				widget.launched(widget)
+			elseif widget.last_mb == 2 then
+				GuiLauncher._open_context_menu(widget)
+			end
+		end
+	}
+end
+
+function GuiLauncher._open_context_menu(widget)
+	local filename = widget.item.path:basename()
+	
+	local menu_items = {
+		{
+			label = "\^:ffff180418201800 Launch",
+			action = function() widget.launched(widget) end
+		},
+		{
+			divider = true
+		},
+		{
+			label = "\^:0f013d2525243c00 Copy Path",
+			action = function()
+				set_clipboard(widget.item.path)
+				notify("Copied to clipboard: " .. widget.item.path)
+			end
+		},
+		{
+			label = "\^:00387f7f7f7f7f00 Show in Filenav",
+			action = function()
+				local folder = widget.item.path:dirname()
+				Util.os_open_folder(folder)
+			end
+		},
+		{
+			divider = true
+		},
+		{
+			label = "About " .. filename,
+			action = function()
+				Util.os_about(widget.item.path)
+			end
+		},
+	}
+	
+	GuiPopupMenu.new(widget, {
+		width = 144,
+		items = menu_items
+	})
+end
+
+return GuiLauncher
+
+:: src/gui/popup_menu.lua
+--[[pod_format="raw",created="2025-12-07 00:25:36",modified="2025-12-12 22:22:05",revision=48,xstickers={}]]
+
+local Util = require("src/util")
+
+local GuiPopupMenu = {}
+
+-- Args:
+--  x: number?,
+--  y: number?,
+--  width: number?,
+--  items: table array:
+--			label: string,
+--			action: func() callback,
+--			divider: bool?,
+--			stay_open: bool?
+function GuiPopupMenu.new(parent, args)
+	local popup_width = args.width or 100
+	local popup_height = 10
+	
+	for item in all(args.items) do
+		popup_height += item.divider and 8 or 12
+	end
+	
+	local left = 4
+	local right = 476 - popup_width
+	local top = Util.os_toolbar_height + 4
+	local bottom = 266 - popup_height
+	
+	local popup_x = Util.clamp(args.x or parent.sx, left, right)
+	local popup_y = math.max(args.y or parent.sy + parent.height + 2, top)
+	
+	if popup_y > bottom then
+		popup_y = Util.clamp(parent.sy - popup_height - 2, top, bottom)
+	end
+	
+	local modal = parent.head:attach {
+		x = 0,
+		y = 0,
+		width = 480,
+		height = 270,
+		click = function(widget)
+			widget:detach()
+		end
+	}
+	
+	local pulldown = modal:attach_pulldown {
+		x = popup_x,
+		y = popup_y,
+		width = popup_width,
+		onclose = function() modal:click() end
+	}
+	
+	for item in all(args.items) do
+		pulldown:attach_pulldown_item {
+			label = item.label,
+			action = item.action,
+			divider = item.divider,
+			stay_open = item.stay_open
+		}
+	end
+	
+	return pulldown
+end
+
+return GuiPopupMenu
+
+:: src/lib/lens.lua
+--[[pod_format="raw",created="2024-04-16 23:51:32",modified="2024-04-23 22:38:39",revision=652]]
+-- Lens client for sending debug messages to the Lens app.
+Lens = {
+	LEVEL_DEBUG = 0,
+	LEVEL_INFO = 1,
+	LEVEL_WARN = 2,
+	LEVEL_ERROR = 3,
+}
+
+do
+
+local _pid = nil
+
+local _get_pid = function()
+	if _pid == nil then
+		for p in all(fetch("/ram/system/processes.pod")) do
+			if p.name == "lens" then
+				_pid = p.id
+				break
+			end
+		end
+	end
+	return _pid
+end
+
+local _traceback = function()
+	local lines = split(debug.traceback(), "\n")
+	local trace = {}
+	-- first line of traceback is just formatting
+	-- second and third lines are local trace so skip those too
+	for i = 4, #lines do
+		local item = {}
+		_, _, item.file, item.line, item.type, item.name
+			= lines[i]:find("%s*(.*):(%d+):.*in (%a+) '(.*)'")
+		add(trace, item)
+	end
+	return trace
+end
+
+Lens.log = function(value)
+	send_message(_get_pid(), {
+		event = "log",
+		value = value,
+		level = Lens.LEVEL_INFO,
+		trace = _traceback(),
+	})
+end
+
+end
+
+
+:: src/lib/require.lua
+--[[pod_format="raw",created="2025-12-05 18:01:25",modified="2025-12-05 18:23:21",revision=7,xstickers={}]]
+-- Sourced from https://www.lexaloffle.com/bbs/?tid=140784
+
+local _modules = {}
+
+function require(name)
+	if _modules[name] == nil then
+		_modules[name] = include(fullpath(name:gsub("%.", "/") .. ".lua"))
+	end
+	return _modules[name]
+end
+
+:: src/lib/sort.lua
+--[[pod_format="raw",created="2025-12-05 01:44:26",modified="2025-12-05 18:01:59",revision=8,xstickers={}]]
+-- Sourced from https://www.lexaloffle.com/bbs/?tid=142305
+
+-- An implementation of QuickSort which does not allocate new tables.
+-- Mutates the provided table.
+function sort(arr,key)
+	local function insertion_sort(min,max)
+		for i = min+1,max do
+			for j = i,min+1,-1 do
+				local item,other = arr[j],arr[j-1]
+				if other[key] <= item[key] then break end
+				arr[j],arr[j-1] = other,item
+			end
+		end
+	end
+
+	local function quick_sort(min,max)
+		-- This means there's one or none elements in the list.
+		-- It literally cannot be unsorted.
+		if min >= max then
+			return
+		end
+
+		-- The pivot will be the median value between the first, last,
+		-- and middle elements. This is done to avoid worst case scenarios
+		-- where the pivot is already at the boundary between buckets.
+		local pivot
+		do -- The local variables here can be discarded after pivot selection.
+			local pivot_i = flr((max+min)/2)
+			pivot = arr[pivot_i][key]
+
+			local first = arr[min][key]
+			local last = arr[max][key]
+
+			-- Bubble sort the first, middle, and last elements.
+			if first > pivot then
+				arr[min],arr[pivot_i] = arr[pivot_i],arr[min]
+				first,pivot = pivot,first
+			end
+			if pivot > last then
+				arr[pivot_i],arr[max] = arr[max],arr[pivot_i]
+				pivot = last -- last is unused from here on. Doesn't need to be valid.
+			end
+			if first > pivot then
+				arr[min],arr[pivot_i] = arr[pivot_i],arr[min]
+				pivot = first -- first is unused from here on. Doesn't need to be valid.
+			end
+		end
+
+		-- If there's three or fewer elements, it is already sorted.
+		if max-min < 3 then return end
+
+		local low,high = min+1,max-1
+		while true do
+			-- Find the first high bucket item in the low bucket,
+			while low < high and arr[low][key] < pivot do
+				low += 1
+			end
+			-- and the last low bucket item in the high bucket.
+			while low < high and arr[high][key] > pivot do
+				high -= 1
+			end
+			-- If they are the same item, we have sorted all elements into the buckets.
+			if low >= high then break end
+
+			-- Otherwise, swap the elements, so they are in the correct buckets.
+			arr[low],arr[high] = arr[high],arr[low]
+			-- We now know those two items are in the correct buckets, so we
+			-- don't need to recheck them.
+			low += 1
+			high -= 1
+		end
+
+		-- Sort the low bucket and the high bucket individually.
+		-- insertion_sort is better for small buckets.
+		local algo = high-min < 8 and insertion_sort or quick_sort
+		algo(min,high)
+		algo = max-low < 8 and insertion_sort or quick_sort
+		algo(low,max)
+	end
+
+	-- Sort everything
+	local algo = #arr <= 8 and insertion_sort or quick_sort
+	algo(1,#arr)
+
+	-- Return the sorted array. Since this function mutates the original,
+	-- this is purely for convenience.
+	return arr
+end
+:: src/pattern.lua
+--[[pod_format="raw",created="2025-12-11 01:02:52",modified="2025-12-11 01:15:48",revision=11,xstickers={}]]
+
+local Util = require("src/util")
+
+local _screen_door = {
+	0b1000000000000000,
+	0b1000000000100000,
+	0b1010000000100000,
+	0b1010000010100000,
+	0b1010010010100000,
+	0b1010010010100001,
+	0b1010010110100001,
+	0b1010010110100101,
+	0b1110010110100101,
+	0b1110010110110101,
+	0b1111010110110101,
+	0b1111010111110101,
+	0b1111110111110101,
+	0b1111110111110111,
+	0b1111111111110111,
+	0b1111111111111111
+}
+
+local Pattern = {}
+
+function Pattern.set_screen_door(alpha)
+	local index = Util.clamp(math.floor(alpha * 16), 1, 16)
+	
+	fillp(_screen_door[index])
+end
+
+return Pattern
+
+:: src/screen.lua
+--[[pod_format="raw",created="2025-12-03 23:34:33",modified="2025-12-14 02:36:47",revision=1065,xstickers={}]]
+
+local Category = require("src/category")
+local Class = require("src/class")
+local Colormap = require("src/colormap")
+local Config = require("src/config")
+local Draw = require("src/draw")
+local Sfx = require("src/sfx")
+local Util = require("src/util")
+
+local GuiHeader = require("src/gui/header")
+local GuiCategoryPane = require("src/gui/category_pane")
+
+local _column_spacing = 4
+local _pane_width = 80
+local _body_y = 24 + Util.os_toolbar_height
+local _footer_height = 13
+
+local Screen = {
+	plugins = {
+		views = {},
+		backgrounds = {},
+	},
+	gui = {},
+	categories = {},
+	active_categories = {},
+	max_active_categories = 1,
+	view = nil,
+	view_class = nil,
+	background = nil,
+	theme = {},
+	loaded = false,
+	spring_timer = 0,
+	offscreen_target = userdata("u8", 480, 270),
+	config_dependencies = {}
+}
+
+function Screen:install_view(view_class)
+	if not self.plugins.views[view_class.config_name] then
+		add(self.plugins.views, view_class)
+	
+		self.plugins.views[view_class.config_name] = view_class
+	end
+end
+
+function Screen:install_background(bg_class)
+	if not self.plugins.backgrounds[bg_class.config_name] then
+		add(self.plugins.backgrounds, bg_class)
+		
+		self.plugins.backgrounds[bg_class.config_name] = bg_class
+	end
+end
+
+function Screen:init()
+	fetch("font/p8_fixed.font"):poke(0x5600)
+	
+	Colormap.init()
+	
+	self.gui = create_gui()
+	
+	Config:load_current()
+	self:refresh_theme()
+	self:refresh_background()
+	
+	self:_load_last_categories()
+	
+	self:_update_view_class()
+	
+	on_event("gained_focus", function(msg)
+		Util.show_toolbar()
+		-- TODO: Only refresh apps on filesystem changes
+		self:refresh_apps()
+		self:boing()
+	end)
+	
+	on_event("lost_focus", function(msg)
+		self:_save_last_categories()
+		self:_hide_ui()
+	end)
+	
+	for option in all {
+		"background", "color_theme", "picotron_colors", "color_blending",
+		"reduced_motion", "sound"
+	} do
+		self.config_dependencies[option] = Screen.refresh_widgets
+	end
+end
+
+function Screen:refresh_all()
+	self:_update_view_class()
+	self:refresh_apps()
+end
+
+function Screen:refresh_apps()
+	self.categories = {}
+	
+	if Config.current.app_folder and Util.is_absolute_dir(Config.current.app_folder) then	
+		Util.log("Refreshing apps in folder: " .. Config.current.app_folder)
+		
+		local root_category = Category.new("(base)", Config.current.app_folder, false)
+		
+		root_category:populate()
+		
+		if #root_category.items > 0 then
+			add(self.categories, root_category)
+		end
+		
+		local dir_list = ls(Config.current.app_folder)
+		
+		for dir_item in all(dir_list) do
+			local full_path = Config.current.app_folder .. "/" .. dir_item
+			
+			if Util.os_is_folder(full_path) then
+				local category = Category.new(dir_item, full_path, true)
+				add(self.categories, category)
+			end
+		end
+		
+		local metadata = fetch_metadata(Config.current.app_folder)
+		
+		if metadata.springloader_preload then
+			for category in all(self.categories) do
+				category:populate()
+			end
+		end
+		
+		self:_adjust_active_categories()
+	end
+	
+	self:refresh_widgets()
+	
+	self.loaded = true
+end
+
+function Screen:_adjust_active_categories()
+	while #self.active_categories > self.max_active_categories do
+		deli(self.active_categories)
+	end
+	
+	for i = #self.active_categories, 1, -1 do
+		if Util.index_by_key(self.categories, self.active_categories[i], "name") == 0 then
+			deli(self.active_categories, i)
+		end
+	end
+	
+	if #self.active_categories < self.max_active_categories then
+		for category in all(self.categories) do
+			if Util.in_array(self.active_categories, category.name) == false then
+				add(self.active_categories, category.name)
+				
+				if #self.active_categories >= self.max_active_categories then break end
+			end
+		end
+	end
+end
+
+function Screen:_update_view_class()
+	self.view_class = self.plugins.views[Config.current.view or ""]
+	
+	if self.view_class then
+		self.max_active_categories = math.max(1, self.view_class.max_categories or 1)
+	else
+		self.max_active_categories = 1
+	end
+end
+
+function Screen:_hide_ui()
+	for widget in all(self.gui.head.child) do
+		widget:detach()
+	end
+	
+	local os_theme = fetch("/ram/shared/theme.pod") or {}
+	
+	self:refresh_theme(true)
+end
+
+function Screen:refresh_theme(force_pico_colors)
+	local os_theme = fetch("/ram/shared/theme.pod") or {}
+	local os_settings = fetch("/appdata/system/settings.pod") or {}
+	local flavor_name = Config.current.color_theme or "os"
+	
+	if flavor_name == "os" then
+		flavor_name = Colormap.color_to_flavor(os_theme.desktop0)
+	end
+	
+	local colors = {}
+	
+	if force_pico_colors or Config.current.picotron_colors then
+		local pico_colors = Colormap.picotron_colors(flavor_name)
+		
+		colors = {
+			pico_colors.darker, pico_colors.dark, pico_colors.main,
+			pico_colors.light, pico_colors.tint, pico_colors.input
+		}
+	else
+		Colormap.apply_flavor(flavor_name)
+		
+		colors = { 33, 34, 35, 36, 37, 38 }
+	end
+	
+	-- Reuse existing table so that existing widgets can pick up
+	--  on theming changes
+	Util.table_concat(self.theme, {
+		back = colors[3],
+		back1 = colors[4],
+		back2 = colors[3],
+		back_dark = colors[2],
+		back_shadow = colors[1],
+		text = 7,
+		text_tint = colors[6],
+		button = colors[1] + (colors[2] << 8),
+		button_text = colors[5] + (7 << 8),
+		input_bg = colors[6],
+		input_fg = 1,
+		input_select = colors[3],
+		list = Config.current.color_blending and 61 or colors[2],
+		list_border = Config.current.color_blending and 61 or colors[1],
+		tile_hover = colors[1],
+		label = colors[1],
+		lowcolor_pal = Colormap.lowcolor_pal(os_theme),
+		force_lowcolor = os_settings.lowcol_icons or false
+	})
+end
+
+function Screen:refresh_background()
+	local bg = self.plugins.backgrounds[Config.current.background]
+	
+	if bg and bg ~= Class.super(self.background) then
+		self.background = bg.new()
+	end
+end
+
+function Screen:refresh_widgets()
+	self:refresh_theme()
+	self:refresh_background()
+	
+	for widget in all(self.gui.head.child) do
+		widget:detach()
+	end
+	
+	GuiHeader.new(self.gui, {
+		x = 0,
+		y = Util.os_toolbar_height,
+		current_config = Config.current,
+		plugins = self.plugins,
+		theme = self.theme,
+		set_config_option = function(option, value)
+			self:_set_config_option(option, value)
+		end
+	})
+	
+	if #self.categories <= 0 then
+		return
+	end
+	
+	local pane_x = get_display():width() - _pane_width - _column_spacing
+	local pane_y = _body_y + 16
+	
+	GuiCategoryPane.new(self.gui, {
+		x = pane_x,
+		y = pane_y,
+		width = _pane_width,
+		height = get_display():height() - pane_y - _footer_height,
+		categories = self.categories,
+		active_categories = self.active_categories,
+		theme = self.theme,
+		activate_category = function(category_name)
+			self:_activate_category(category_name)
+		end
+	})
+	
+	self:refresh_category_view()
+end
+
+function Screen:refresh_category_view()
+	if self.view then
+		self.view:detach()
+		self.view = nil
+	end
+	
+	if not self.view_class then return end
+	
+	local pane_x = get_display():width() - _pane_width - _column_spacing
+	local view_height = get_display():height() - _body_y - _footer_height
+	
+	self.view = self.view_class.new(self.gui, {
+		x = _column_spacing,
+		y = _body_y,
+		width = pane_x - _column_spacing * 2,
+		height = view_height,
+		categories = self.categories,
+		active_categories = self.active_categories,
+		theme = self.theme
+	})
+end
+
+function Screen:_activate_category(category_name)
+	Sfx.sfx_polite(2)
+
+	del(self.active_categories, category_name)
+	
+	while #self.active_categories >= self.max_active_categories do
+		deli(self.active_categories, 1)
+	end
+	
+	add(self.active_categories, category_name)
+	
+	self:refresh_category_view()
+end
+
+function Screen:_set_config_option(option, value, skip_refresh)
+	if Config.current[option] == nil or Config.current[option] == value then
+		return false
+	end
+	
+	Config.current[option] = value
+	
+	Config:save_current()
+	
+	local refresh_func = self.config_dependencies[option]
+	
+	if refresh_func ~= nil then
+		refresh_func(self)
+	else
+		-- Not specified, assume we need to refresh everything just to be safe
+		self:refresh_all()
+	end
+	
+	return true
+end
+
+function Screen:_load_last_categories()
+	for category in all(Config.current.last_categories) do
+		if type(category) == "string" then
+			add(self.active_categories, category)
+		end
+	end
+end
+
+function Screen:_save_last_categories()
+	Config.current.last_categories = self.active_categories
+	
+	Config:save_current()
+end
+
+function Screen:boing()
+	Sfx.sfx_polite(0)
+	self.spring_timer = 0.5
+end
+
+function Screen:update()
+	self.gui:update_all()
+	
+	if self.spring_timer > 0 then
+		self.spring_timer = math.max(0, self.spring_timer - Util.time_delta)
+	end
+	
+	if self.background and not Config.current.reduced_motion then
+		self.background:update()
+	end
+end
+
+function Screen:draw()
+	local springing = self.spring_timer > 0.00001 and not Config.current.reduced_motion
+
+	if springing then
+		cls()
+		set_draw_target(self.offscreen_target)
+	end
+
+	self:_draw_screen()
+	
+	set_draw_target()
+	
+	if springing then
+		self:_draw_spring_screen()
+	end
+	
+	if Util.dev_mode then
+		print("\#0FPS: " .. string.format("%.1f", stat(7)),
+			280, 260, 7)
+		print("\#0CPU: " .. string.format("%.5f", stat(1)),
+			340, 260, 7)
+		print("\#0Mem: " .. tostring(math.ceil(stat(0) / 1024)) .. " KB",
+			410, 260, 7)
+	end
+end
+
+function Screen:_draw_screen()
+	if self.background then
+		self.background:draw(self.theme)
+	else
+		cls(self.theme.back)
+	end
+
+	self.gui:draw_all()
+	
+	if self.loaded and #self.categories <= 0 then
+		Draw.label_multiline("Nothing found in " ..
+			Config.current.app_folder .. "\n\nSure is empty in here...", {
+				x = 240,
+				y = 125,
+				center_x = true,
+				fg_col = self.theme.text_tint,
+				bg_col = self.theme.list
+			})
+	end
+end
+
+function Screen:_draw_spring_screen()
+	local oscillation = math.sin(self.spring_timer * math.pi * 16)
+	local pos = oscillation * self.spring_timer * self.spring_timer * 32
+	local width = self.offscreen_target:width()
+	local height = self.offscreen_target:height()
+	
+	palt(0, false)
+	sspr(self.offscreen_target, 0, 0, width, height,
+		pos + 0.5, 0, width - pos * 2 + 0.5, height)
+	palt()
+end
+
+return Screen
+
+:: src/sfx.lua
+--[[pod_format="raw",created="2025-12-11 20:57:20",modified="2025-12-11 20:57:31",revision=1,xstickers={}]]
+
+local Config = require("src/config")
+
+local Sfx = {}
+
+function Sfx.sfx_polite(sound)
+	if not Config.current.sound then return end
+	
+	-- Check if another process is playing audio and only play if
+	--  it wouldn't interrupt.
+	local active_proc = stat(499)
+	local active_channels = stat(498)
+	
+	-- Also ignore system process so OS startup doesn't block sound
+	-- TODO: Is it too risky to just check that no channels are active? What if a background app still wants control?
+	if active_proc <= 1 or active_proc == pid() or active_channels == 0 then
+		sfx(sound)
+	end
+end
+
+return Sfx
+
+:: src/text.lua
+--[[pod_format="raw",created="2025-12-08 01:52:18",modified="2025-12-12 22:55:00",revision=19,xstickers={}]]
+
+local Text = {}
+
+function Text.calculate_width(text, small_font)
+	-- Calculation taken from OS gui.lua. TODO: Find better calculation
+	return small_font and #text * 4 or #text * 5
+end
+
+function Text.calculate_width_multiline(lines, small_font)
+	local width = 0
+	
+	for i = 1, #lines do
+		width = max(width, Text.calculate_width(lines[i], small_font))
+	end
+	
+	return width
+end
+
+function Text.split_lines(text, wrap_width, small_font)
+	local lines = split(text, "\n", false)
+	
+	if not wrap_width or wrap_width <= 0 then return lines end
+	
+	local wrapped_lines = {}
+	
+	for line in all(lines) do
+		local words = split(line, " ", false)
+		local current_width = 0
+		local wrapped = ""
+		
+		for word in all(words) do
+			if #wrapped == 0 then
+				wrapped = word
+				current_width = Text.calculate_width(word, small_font)
+			else
+				local to_add = " " .. word
+				local next_width = Text.calculate_width(to_add, small_font)
+				if current_width + next_width > wrap_width then
+					add(wrapped_lines, wrapped)
+					wrapped = word
+					current_width = Text.calculate_width(word, small_font)
+				else
+					wrapped = wrapped .. to_add
+					current_width += next_width
+				end
+			end
+		end
+		
+		if #wrapped > 0 then
+			add(wrapped_lines, wrapped)
+		end
+	end
+	
+	return wrapped_lines
+end
+
+return Text
+
+:: src/util.lua
+--[[pod_format="raw",created="2025-12-04 17:18:39",modified="2025-12-12 22:13:42",revision=199,xstickers={}]]
+
+include "src/lib/sort.lua"
+
+local Util = {
+	dev_mode = (env().argv[0]:find("/system") == 1),
+	checkmark = "\^:0020301a0e040000",
+	os_toolbar_height = 11,
+	time_delta = 1 / 60
+}
+
+if Util.dev_mode then
+	include "src/lib/lens.lua"
+	
+	function Util.log(message)
+		Lens.log(message)
+	end
+	
+	Lens.log("Springloader using Lens for logging")
+else
+	function Util.log(message)
+	end
+end
+
+function Util.clamp(value, low, high)
+	return math.max(low, math.min(high, value))
+end
+
+function Util.in_array(array, item)
+	for value in all(array) do
+		if value == item then return true end
+	end
+	
+	return false
+end
+
+function Util.index(array, item)
+	for i, value in ipairs(array) do
+		if value == item then return i end
+	end
+	
+	return 0
+end
+
+function Util.index_by_key(array, item, key)
+	for i, value in ipairs(array) do
+		if value[key] == item then return i end
+	end
+	
+	return 0
+end
+
+function Util.table_concat(dest, src)
+	for k, v in pairs(src) do
+		dest[k] = v
+	end
+	
+	return dest
+end
+
+function Util.checkmark_text(text, enabled)
+	return (enabled and Util.checkmark or "\-e  ") .. "\-f " .. text
+end
+
+function Util.is_absolute_dir(filepath)
+	return #filepath > 0 and filepath[1] == "/"
+end
+
+function Util.is_web_player()
+	-- Kinda hackish but oh well
+	return #stat(150) > 0
+end
+
+function Util.os_item_type(filepath)
+	local extension = filepath:ext()
+	
+	if extension and extension:is_cart() then
+		return "cart"
+	elseif extension == "loc" then
+		return "loc"
+	end
+	
+	local item_type = fstat(filepath)
+	
+	return item_type
+end
+
+function Util.os_is_folder(filepath)
+	return Util.os_item_type(filepath) == "folder"
+end
+
+function Util.os_open_folder(folder_path)
+	create_process("/system/apps/filenav.p64", {
+		path = folder_path,
+	})
+end
+
+function Util.os_about(filepath)
+
+	create_process("/system/apps/about.p64", {
+		argv = { filepath },
+		window_attribs = { autoclose = true }
+	})
+end
+
+local _item_type_to_launcher = {
+	cart = function(filepath)
+		create_process(filepath)
+	end,
+	folder = function(filepath)
+		Util.os_open_folder(filepath)
+	end,
+	file = function(filepath)
+		-- Code from filenav.p64
+		create_process(env().open_with and env().open_with or "/system/util/open.lua", {
+			argv = { filepath },
+			fileview = {{ location = filepath, mode = "RW" }}, -- grant permission to access it (in case opening program is sandboxed)
+		})
+	end
+}
+
+function Util.os_launch(filepath)
+	local item_type = Util.os_item_type(filepath)
+	
+	if item_type == "loc" then
+		local new_path = Util.follow_loc_file(filepath)
+		
+		if new_path == filepath then
+			notify("Invalid loc file at " .. filepath .. "!")
+		elseif new_path then
+			return Util.os_launch(new_path)
+		end
+	end
+	
+	local launcher = _item_type_to_launcher[item_type]
+	
+	if launcher then
+		launcher(filepath)
+	else
+		notify("Unknown item type for " .. filepath .. "!")
+	end
+end
+
+function Util.follow_loc_file(filepath)
+	for i = 1, 32 do
+		local data = fetch(filepath)
+		
+		if data and data.location and Util.is_absolute_dir(data.location) then
+			filepath = data.location
+			
+			if Util.os_item_type(filepath) ~= "loc" then
+				return filepath
+			end
+		else
+			break
+		end
+	end
+	
+	-- If we got here, the .loc file was invalid,
+	--  or the .loc chain is probably an infinite loop.
+	--  Return the source path.
+	
+	return filepath
+end
+
+function Util.show_toolbar()
+	send_message(3, {
+		event = "dock_toolbar",
+		state = true
+	})
+end
+
+function Util.instance_running()
+	if env().corun_program then
+		return false -- Running as loaded dev cart, ignore
+	end
+	
+	local proc_id = pid()
+	local prog = env().argv[0]
+	
+	local procs = fetch("/ram/system/processes.pod")
+	
+	for proc in all(procs) do
+		if proc.prog == prog and proc.id ~= proc_id then
+			return true
+		end
+	end
+	
+	return false
+end
+
+return Util
+
+:: src/view/auto_tiles.lua
+--[[pod_format="raw",created="2025-12-08 18:27:21",modified="2025-12-13 20:33:14",revision=3,xstickers={}]]
+
+local Util = require("src/util")
+
+local ViewTilesCommon = require("src/view/tiles_common")
+
+local ViewAutoTiles = {
+	name = "Automatic",
+	config_name = "auto_tiles",
+	max_categories = 1
+}
+
+-- Args:
+--  x: number,
+--  y: number,
+--  width: number,
+--  height: number,
+--  categories: table,
+--  active_categories: table,
+--  theme: table
+function ViewAutoTiles.new(parent, args)
+	return ViewTilesCommon.new(parent, Util.table_concat({
+		big_icons = "auto"
+	}, args))
+end
+
+return ViewAutoTiles
+
+:: src/view/big_tiles.lua
+--[[pod_format="raw",created="2025-12-07 23:31:07",modified="2025-12-13 20:10:40",revision=8,xstickers={}]]
+
+local Util = require("src/util")
+
+local ViewTilesCommon = require("src/view/tiles_common")
+
+local ViewBigTiles = {
+	name = "Big Tiles",
+	config_name = "big_tiles",
+	max_categories = 1
+}
+
+-- Args:
+--  x: number,
+--  y: number,
+--  width: number,
+--  height: number,
+--  categories: table,
+--  active_categories: table,
+--  theme: table
+function ViewBigTiles.new(parent, args)
+	return ViewTilesCommon.new(parent, Util.table_concat({
+		big_icons = true
+	}, args))
+end
+
+return ViewBigTiles
+
+:: src/view/columns.lua
+--[[pod_format="raw",created="2025-12-07 18:00:00",modified="2025-12-13 20:11:28",revision=28,xstickers={}]]
+
+local Util = require("src/util")
+
+local GuiCategoryView = require("src/gui/category_view")
+
+local _column_spacing = 4
+
+local ViewColumns = {
+	name = "Columns",
+	config_name = "columns",
+	max_categories = 3
+}
+
+-- Args:
+--  x: number,
+--  y: number,
+--  width: number,
+--  height: number,
+--  categories: table,
+--  active_categories: table,
+--  theme: table
+function ViewColumns.new(parent, args)
+	local container = parent:attach {
+		x = args.x,
+		y = args.y,
+		width = args.width,
+		height = args.height
+	}
+
+	local category_x = 0
+	local category_height = args.height
+	local category_count = 0
+	local columns = ViewColumns.max_categories
+	local column_width = math.floor((args.width - ((columns - 1) * _column_spacing)) / columns)
+	
+	for category_name in all(args.active_categories) do
+		local index = Util.index_by_key(args.categories, category_name, "name")
+		
+		if index > 0 then
+			GuiCategoryView.new(container, {
+				x = category_x,
+				y = 0,
+				width = column_width,
+				height = category_height,
+				big_icons = false,
+				category = args.categories[index],
+				theme = args.theme
+			})
+			
+			category_x += column_width + _column_spacing
+			category_count += 1
+			
+			if category_count >= columns then break end
+		end
+	end
+	
+	return container
+end
+
+return ViewColumns
+
+:: src/view/small_tiles.lua
+--[[pod_format="raw",created="2025-12-07 19:06:37",modified="2025-12-13 20:10:46",revision=24,xstickers={}]]
+
+local Util = require("src/util")
+
+local ViewTilesCommon = require("src/view/tiles_common")
+
+local ViewSmallTiles = {
+	name = "Small Tiles",
+	config_name = "small_tiles",
+	max_categories = 1
+}
+
+-- Args:
+--  x: number,
+--  y: number,
+--  width: number,
+--  height: number,
+--  categories: table,
+--  active_categories: table,
+--  theme: table
+function ViewSmallTiles.new(parent, args)
+	return ViewTilesCommon.new(parent, Util.table_concat({
+		big_icons = false
+	}, args))
+end
+
+return ViewSmallTiles
+
+:: src/view/tiles_common.lua
+--[[pod_format="raw",created="2025-12-08 17:54:15",modified="2025-12-13 22:42:57",revision=12,xstickers={}]]
+
+local Util = require("src/util")
+
+local GuiCategoryView = require("src/gui/category_view")
+
+local ViewTilesCommon = {}
+
+-- Args:
+--  x: number,
+--  y: number,
+--  width: number,
+--  height: number,
+--  big_icons: bool or "auto",
+--  categories: table,
+--  active_categories: table,
+--  theme: table
+function ViewTilesCommon.new(parent, args)
+	local container = parent:attach {
+		x = args.x,
+		y = args.y,
+		width = args.width,
+		height = args.height
+	}
+
+	local category_x = 0
+	local category_height = args.height
+	
+	if #args.active_categories >= 1 then
+		local index = Util.index_by_key(args.categories, args.active_categories[1], "name")
+		local active_category = args.categories[index]
+		local use_big_icons
+		
+		if args.big_icons == "auto" then
+			-- Need to populate now so we know how many items there are
+			active_category:populate()
+			
+			use_big_icons = #active_category.items <= 15
+		else
+			use_big_icons = args.big_icons
+		end
+		
+		if index > 0 then
+			GuiCategoryView.new(container, {
+				x = category_x,
+				y = 0,
+				width = args.width,
+				height = category_height,
+				grid_layout = true,
+				big_icons = use_big_icons,
+				category = active_category,
+				theme = args.theme
+			})
+		end
+	end
+	
+	return container
+end
+
+return ViewTilesCommon
+
+:: .info.pod
+--[[pod,author="KeyboardDanni",bbs_id="springloader-2",created="2025-11-13 21:07:43",icon=userdata("u8",16,16,"00000001010101010101010101000000000001100c0c1c1c0c0c1c0c100100000001100c0c1c1c0c0c0c0c0c0c10010001100c0c1c1c0c0c1c0c0c0c0c0c1001011c0707070707070707070707071c0101100c101010101010101010100c100101010101010101010101010101010101000000000000010d06060d0100000000000000000001060101010100000000000000000001010d01000000000000000000000000010d0101010100000000000000000000000106070706010000000000000000000000010101010d01000000000000000000000000010d0101000000000000000000010101010601000000000000000000010d06060d01000000000000"),lowcol_icon=false,modified="2025-12-14 19:08:36",notes="A full-screen app launcher.",runtime=24,sandbox=false,title="Springloader",version="v2",workspaces={{location="main.lua",workspace_index=1},{location="src/screen.lua#122,24",workspace_index=1},{location="src/config.lua#16,15",workspace_index=1},{location="src/util.lua#74,34",workspace_index=1},{location="src/category.lua#14,1",workspace_index=1},{location="src/gui/header.lua",workspace_index=1},{location="src/gui/category_view.lua",workspace_index=1},{location="gfx/0.gfx",workspace_index=2},{location="gfx/1_colormap.gfx",workspace_index=2},{location="gfx/2_bg.gfx",workspace_index=2},{location="map/0.map",workspace_index=3},{location="sfx/0.sfx",workspace_index=4}}]]
+:: font/.info.pod
+--[[pod,created="2025-12-08 00:15:02",modified="2025-12-14 19:08:36"]]
+:: font/p8_fixed.font
+b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTEyLTA4IDAwOjEyOjQ4Iixtb2RpZmllZD0iMjAyNS0x
+Mi0wOCAwMDoxNDozNCIscmV2aXNpb249MV1dbHo0AHkFAACjBQAA8INweHUAAygACAAABAQIBhAD
+8GpHMCdABwUHQAUCBUAFAAVAJTAEBgcGBCABAwcDASAHIUAkByAFBwIHAkACcAECUBMgFVACBQLA
+IgACIBVQBQcFBwUgBwMGBwIgBQQCAQUgEwYFByACAVACIQIgAiQCIAUCBwIFMAIHAmACAUAHgAIg
+BCIBIAclByADIgcgBwQHAQYA8QkGBAcgFQcUIAcBBwQHIBEHBQcgBzQgBwUJAPANBQcUMAIAAkAC
+AAIBIAQCAQIEMAcABzABAgQCATwAcAACIAIVAQYpAPEFFSAHBQMFByAGIQYgAyUHIAcBAwEGAFAR
+IAYRBWQAMBUgB3gA8AQiAyAVAxUgMQcgFyUgAzUgBiUDQABQESACFQNKAPAMAxUgBgEHBAMgBzIg
+NQYgJQcCICUXIBUCFSAVogDwbgcEAgEHIAMhAyABIgQgBiQGIAIFkAcgAgRgBgUHBTATBQcwBhEG
+MAMVAzAHAwEGMAcDETAGAQUHMBUHBTAHEgcwBxIDMAUDFTAhBjAXFTADJTAGFQMwBgUHATACBQMG
+MAMFAwUwBgEEAzAHIjAlBjAVBwIwFRcwBRIFMAUHFgDyEgQBByAGAgMCBiBCIAMCBgIDMAQHAUAC
+BQIwT38gD1UPKgQA8gYgD0EPfx9dDz4gDh9jD3cOIA8RD0QEAPAyIAQPPA8cDx4PECAPHA8uHg8c
+IA82Hg8cCCANDzYPdw82DSAdDg0PFCANDg9-DyoPOiAOD2cPYw9nDiAPfw9dD39bAPARIA84GB8O
+IA4PYw9rD2MOIAgNDg0IQA9VQA4Pcw9jD3MSAKAPfw4PIiAODQgNKQDwCncfYw4wBQ9SDyBADxEP
+Kg9EMA4Paw93D2tXAPAiAAwADCBPVSAPDgQPHg8tDyYgDxEfIQ8lAiAPDA8eHyANIAgPHggPJA8a
+IA9OBA4PRSIAcCIPXx8SCiAZALA8DxEGIA8QDwwCC9cA8HgiD3ofIg8SIA8eDyAAAg88IAgJDxAC
+CyAiDyINIAgOCAsIIA8SDz8PEgINIAkPEA9_BA84IAIHDzICAyAPDwIPDg8QDSAOH0APIA8YIA4P
+EBgBIAgPOAQCCSADBw8SD3gPGCAPeg9CAgoPciAPCQ4PSw9tD2YgDxoPJw8iD3MDIAkPSh9JD0Zl
+ABE6BADyZBogDyMPYh8iDSALAAgPKg9NMAsPEg8hD0AgD30PeQ8RDz0PXSAOCQgPHg8uIAYPJA9_
+DyYBIA8kD04ED0YJIAoJD1oPRg8wIA8eBAUPRA84IA8UDg8kGCAPOg9WD1IPMAggBA0EBQYgCAIO
+DyANIB8iDya8APICDA8kD3IPMCAEDzYPLA8mD2QTADRCDzCvABAjKAHwGg4PZA0PKA94IAQCBg8r
+DxlADw4BCDAKDx8PEgQwBA8PDxUPDTAECwYPygHwGiAPFAQCIA8wCA8OGCAIDg8iDyAMIA4oDiAB
+D34MDxQPEiAEDg8kDyIDawFADgggCQ0A8QEBCCAED3wPEgEIIA4vIA4g5ADxAiQPIAEgBgcPJgEL
+IA4HAQwFOgAAjQFQDyIPJAcWAPACDyIPLQ8wCyAPHAgOCAQgHyoWADAPHAANAPAHFA0PJAQgCA4Y
+BDANEA4gDgcPKAEPLJMA8w4wD14IICcBDw4gAR8kD0QPQiACDx4SDSAOFwELIHsBYDAIDggfKjYA
+0RQIASAJAA4ADx4gCAQeAUB_IA9ATQAgaAZzATEKBAmZAPATFCANIQ4gCgEKAQogDgAOBwwgIwcB
+IC8UD1QPMiASDyIPEiABYS8iDiAOBb0A8BIHCQcMIAYXAQ8OMA8VAQ8IBjAECg8UBEALDwgKMA0M
+AQ1wAKBjAQggCAEDBAgg
+:: gfx/.info.pod
+--[[pod,created="2025-11-13 21:07:43",modified="2025-12-14 19:08:36"]]
+:: gfx/0.gfx
+b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTAxLTE3IDEwOjM1OjQ4Iixtb2RpZmllZD0iMjAyNS0x
+Mi0xMSAyMDo0MjozMiIscmV2aXNpb249MjhdXWx6NAC1AQAAhk8AAPAce1swXT17Ym1wPXB4dQBD
+IBAQBCCRQAEPEBwfHBwODA8QASABDRweXA0BAAgA8RwcDkwNEQ63DhENDJ0MDfEBUAEPDRYLAYAB
+BjGAEQsBsAELMaABBhcGAaAxDgDxHBGAMQYBgAELFgsBUCxmbGFncz0wLHBhbl94PS0xNS42MTE5
+MDQ3NjE5MDUXAHV5PTEuMzgzAQCuNCx6b29tPTl9LKQA75cBIAEHnQcBAAEHvQcRBAAJ-wcPHQed
+Bw4RHpceAQABvgEgAZ4BQJEgkAA5-wPwCVGAAS8eLxcBAGEvHj8XEd4CAAFPAQDRAHYAOkUA8QHX
+5gAMBADh1xEXjx0nEReOFw4Rtw76AE8QwfADgQA5-woAkVABdwYBQAF3FgEwAXcmASABdzYBEAG3
+BAATL9EAjQBVlSc9RwEQATctRwwAQRctBw0IACAddwYAIF03GgAjTTcwAA_dAD4v8PBOAP------
+----------------------------------------------------------------------------
+------------------9QUG09OX19
+:: gfx/1_colormap.gfx
+b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTEyLTA4IDIyOjUxOjE3Iixtb2RpZmllZD0iMjAyNS0x
+Mi0xMSAwMDo0NDo0OSIscmV2aXNpb249MTldXWx6NADxAQAA0DIAAPbze1swXT17Ym1wPXB4dQBD
+IEBABPAw8TDyMPMw9DD1MPYw9zD4MPkw_jD7MPww-TD_MP8PMP8QMP8RMP8SMP8TMP8UMP8VMP8W
+MP8XMP8YMP8ZMP8aMP8bMP8cMP8dMP8eMP8fMP8gMP8hMP8iMP8jMP8kMP8lMP8mMP8nMP8oMP8p
+MP8qMP8rMP8sMP8tMP8uMP8vMP8A--_zAQIDBAUGBwgJCgsMDQ4PDw8QDxEPEg8TDxQPFQ8WDxcP
+GA8ZDxoPGw8cDx0PHg8fDyAPIQ8iDyMPJA8lHyb-AAgBBQ8YDxsPGQ0XDg8PBw8aDxwGDxcHDA8c
+DQMEDxQPDwcICQcLFw4ANwBSLyb-AAtiACANBmAAcAkPGw8QDxJfAPcJAQ8TAQ8ADxUPAAUODwIE
+DxsDDA0PAgQfdgAaD3YAPQ8XAHYAFQB1AAM0AB8-cwAfFi9zAABxAPEQLGZsYWdzPTAscGFuX3g9
+LTE5LjM3OTExMjU1NDExMxcAonk9MjcuMjMzNTgCALc2LHpvb209MTR9LPsBWxAQBPDwTwATMEAA
+EjAyAB84MQD--------------_NfBAQE8AAxAAsvMTZjAB4PMQD-------------------------
+----------------------9sUG09OH19
+:: gfx/2_bg.gfx
+b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTEyLTA4IDIxOjI0OjI0Iixtb2RpZmllZD0iMjAyNS0x
+Mi0wOCAyMTo1NjoyMyIscmV2aXNpb249NF1dbHo0AAABAAD3NAAA8xR7WzBdPXtibXA9cHh1AEMg
+EBAE8PAsZmxhZ3M9MCxwYW5feAgAx3k9MCx6b29tPTN9LDEAf4CABPcQ8BAEAOjfcPcQ8FD3EPAS
+9wjwFggACj8M8BIIAAhPIjcwNwkADU8StzC3CQAOAC0AHyIJAAwLfAAMCAA-FvcICAAKEVAEABUw
+BAEPBADhFTAIAQ7sAQ4IAApgAQwIAA7qAQ4JAA7qAQ4JAA7qAQ8JAAALfAAMCAAM7AEMCAAA8AAf
+MCMEDg9UBBsfODEA------------------------------------------------------------
+----h1BtPTh9fQ==
+:: label.qoi
+b64$cW9pZgAAAeAAAAEOBAH-_PDo-P39-f39-f39-f39-f39-eH_gHCYxAT9-f39-fQsBMYswQTA
+LMEEyyzBBMgsxATGLMYEySwELATI-uAIqMYEyyzFBP39-f397yzABCzABMYswQTALMEExizCBCzB
+BMgsBMIsBMYsxgTKLATJNMYEzywELAT9-f39-e4sBCzABCwExizBBMAswQTGLMIELMEEyCwEwiwE
+xizGBMYsxwTINMAEzizBBCzBBP39-f397SzDBCwExizGBMYswgTMLATCLATGLMYExizABMMswATH
+NATQLAQsBP39-f398CwELMAELMAExywELMIELATGLMUEySwEwCzBBNYswATDLMAEyDTABM4sxQT9
+-f39-ewsxgTGLAQswgQsBMYsxQTHLMEEwCzBBMYsxgTGLMAEwyzABMo0BM4sxAT9-f39-e0sxATH
+LMYExizFBMcswQTLLMAEwizABMYsxwTINMAE-f39-f39-f39-f39-f395-5o0PjN-gCQ4OAk3gTk
+JNYE4CTeBOQk1gTgJN4E5CTWBOAk3gTNJM0E4CTeBOQk1gTgJN4E5CTWBOAk3gTkJNYE4CTeBM0k
+zQTgJN4E5CTWBOAk3gTkJNYE4CTeBOQk1gTgJN4EzSTNBOAk3gTkJNYE4CTeBOQk1gTgJN4E5CTW
+BOAk3gTT-hgoUP391ATEFPEEzxTKBMQUygTEFMoExBTKBMsk3gT9y-4gYLD8BMkU-f3WBMIU8wTN
+FMwEwhTMBMIUzATCFMwEyv5o0PjeBP3K-iBgsP3ABMcU-f3Y-mjQ_MAU9STLFM4kBBTOBMAUziTA
+FM4kyQTeJN4E3iTH-iBgsMMUwCTLFCTKFMAkzRQkzf5o0PjCBMIU9-6Y8Pj_GChQyP6Y8PjA-hgo
+UMH_mPD4wP4YKFD9yyTAFMP_mPD4wP4YKFDA-pjw_P4YKFDrJMsUziQEFMb_mPD4-hgoUP6Y8Pj_
+GChQwwTAFM4kwBTH-pjw_MD_GChQwyTJBN4k3gTeJMf_IGCwwhT__PDowBQkygQkygTAJM0EJM3_
+aND4wv4AkODCFO7_mPD4-hgoUMb_mPD4-hgoUMf_mPD4-hgoUML_mPD4-hgoUMP_mPD4-hgoUP3H
+JMAUwv6Y8Pj_GChQwP6Y8Pj_GChQ-pjw_P4YKFDrJMsUxf6Y8PjA-hgoUMUkBBTE-pjw_MD_GChQ
+-pjw_P4YKFDEBMAUw-6Y8PjA-hgoUP6Y8PjB-hgoUMMkwBTC-pjw_Mb_GChQwiTJBN4k3gTeJMf_
+IGCwwv748OgkwAQkFMEkwBQkFMAkFMAkwBTBJMEUwSTABCTBFMAkwRTAJMEUwAQkwBTAJMAUJBTA
+JMP_aND4wv4AkODCFO7_mPD4-hgoUMH_mPD4wf4YKFD_mPD4wv4YKFD_mPD4-hgoUMD_mPD4-hgo
+UMD_mPD4-hgoUML_mPD4-hgoUMP_mPD4-hgoUMH_mPD4wP4YKFDA-pjw_MH_GChQwP6Y8PjB-hgo
+UMH_mPD4wf4YKFDwJMAUwv6Y8Pj_GChQwv6Y8PjB-hgoUMH_mPD4wP4YKFDA-pjw_MH_GChQwf6Y
+8PjB-hgoUMD_mPD4wP4YKFDVJMsUw-6Y8PjA-hgoUMD_mPD4wP4YKFDDJAQUw-6Y8PjA-hgoUP6Y
+8Pj_GChQ-pjw_P4YKFDDBMAUw-6Y8Pj_GChQwP6Y8PjB-hgoUMMkwBTH-pjw_MD_GChQwyTJBN4k
+3gTeJMf_IGCwwv748OgUwCTABMEUJAQUBMAkBMAkwATBFCQUBMEkwAQkwBQEwBQkwATAFCQUBMEk
+FATAFCQEFATAJMP_aND4wv4AkODCFO3_mPD4-hgoUMH_mPD4-hgoUMP_mPD4-hgoUMH_mPD4-hgo
+UMD_mPD4-hgoUP6Y8PjC-hgoUP6Y8PjC-hgoUMD_mPD4-hgoUMT_mPD4-hgoUP6Y8Pj_GChQwP6Y
+8Pj_GChQ-pjw_P4YKFDA-pjw_P4YKFD_mPD4-hgoUPMkwBTC-pjw_P4YKFDC-pjw_P4YKFDA-pjw
+_P4YKFDC-pjw_P4YKFD_mPD4-hgoUMD_mPD4-hgoUP6Y8Pj_GChQwP6Y8Pj_GChQ-pjw_P4YKFDA
+-pjw_P4YKFDUJMsUwv6Y8Pj_GChQwP6Y8PjA-hgoUMD_mPD4-hgoUMIkBBTC-pjw_MD_GChQw-6Y
+8Pj_GChQwgTAFMb_mPD4wf4YKFDDJMAUziTJBN4k3gTeJMf_IGCww-748OjAFCQEJMAEJATAJMIE
+JMAEJMAEJAQkwAQkwAQkwAQkwAQkwBTABCQEJMAEJAQUwAQkBMAkxf5o0PjC-gCQ4MIU7f6Y8Pj_
+GChQwv6Y8PjA-hgoUMH_mPD4-hgoUMH_mPD4-hgoUMD_mPD4-hgoUMD_mPD4-hgoUML_mPD4-hgo
+UML_mPD4-hgoUML_mPD4wf4YKFD_mPD4-hgoUMD_mPD4-hgoUP6Y8Pj_GChQwP6Y8Pj_GChQwP6Y
+8PjA-hgoUPEkwBTC-pjw_P4YKFDC-pjw_P4YKFDA-pjw_P4YKFDA-pjw_MH_GChQ-pjw_P4YKFDA
+-pjw_P4YKFD_mPD4-hgoUMD_mPD4-hgoUP6Y8PjC-hgoUNQkyxTC-pjw_P4YKFDA-pjw_MD_GChQ
+wP6Y8Pj_GChQwiQEFML_mPD4-hgoUP6Y8Pj_GChQwf6Y8Pj_GChQwwTAFMP_mPD4wf4YKFDGJMAU
+w-6Y8PjA-hgoUMckyQTeJN4E3iTH-iBgsMIUJMD__PDoJAQUwAQkBCTDBCTABCTABCQEFMAEJMAE
+JMAEJMAEJBQEwSQEJMAEJATCJAQkxv5o0PjC-gCQ4MIU7P6Y8Pj_GChQxf6Y8Pj_GChQwP6Y8Pj_
+GChQwf6Y8Pj_GChQwP6Y8Pj_GChQwP6Y8Pj_GChQwv6Y8Pj_GChQwf6Y8Pj_GChQwv6Y8Pj_GChQ
+wP6Y8Pj_GChQ-pjw_MH_GChQwP6Y8PjB-hgoUMP_mPD4-hgoUPAkwBTC-pjw_P4YKFDA-pjw_P4Y
+KFD_mPD4-hgoUMD_mPD4-hgoUP6Y8Pj_GChQwP6Y8Pj_GChQ-pjw_P4YKFDA-pjw_P4YKFDA-pjw
+_MH_GChQ-pjw_P4YKFDXJMsUw-6Y8PjA-hgoUMD_mPD4wP4YKFDDJAQUwv6Y8Pj_GChQwP6Y8Pj_
+GChQ-pjw_P4YKFDEBMAUw-6Y8PjB-hgoUMD_mPD4-hgoUMMkwBTC-pjw_Mb_GChQwiTJBN4k3gTe
+JMf_IGCwwv748OgUwAQkBMEkwAQkwhQEFCQEJMAEJMAEwSTABBQkBBTABCQEFMAEJAQUwAQkBBTB
+JAQkxv5o0PjC-gCQ4MIU7P6Y8Pj_GChQwv6Y8PjB-hgoUML_mPD4wP4YKFDA-pjw_MH_GChQwP6Y
+8Pj_GChQwv6Y8Pj_GChQwf6Y8Pj_GChQw-6Y8PjB-hgoUP6Y8Pj_GChQwv6Y8Pj_GChQwv6Y8PjB
+-hgoUPEkwBTD-pjw_MD_GChQwP6Y8Pj_GChQwP6Y8Pj_GChQwP6Y8PjB-hgoUP6Y8Pj_GChQwP6Y
+8Pj_GChQwv6Y8Pj_GChQwP6Y8PjB-hgoUMD_mPD4-hgoUMH_mPD4-hgoUMH_mPD4-hgoUMkkyxTF
+-pjw_MD_GChQxSQEFMb_mPD4-hgoUMUEwBTD-pjw_MH_GChQ-pjw_MD_GChQwyTAFMP_mPD4wP4Y
+KFDHJMkE3iTeBN4kx-4gYLDD-vjw6MAkwAQkwgQkwgTBJAQkwAQkwBTABCTABMAkwATAJMEEwSTA
+BMEkwATBJAQkxv5o0PjC-gCQ4MIU-db_mPD4-hgoUML_mPD4-hgoUPgkwBTX-pjw_MD_GChQ2iTL
+FM4kBBTOBMAUziTAFM4kyQTeJN4E3iTH-iBgsMf__PDoJNEEwCTh-mjQ_ML_AJDgwxT9-dYkwhTz
+JM0UzCTABMAUzATCFMwkwhTMJMoE3iTeBN4kx-4gYLD9wv5o0PjCBMQU-f3UJMQU8STPFMokwQTB
+FMoExBTKJMQUyiTLBN4k3gTeJMf_IGCw-cL_aND4wgTPJN4E3iTeBN4k3gTeJN4E3iTeBN4k3gTe
+JMf_IGCw-cL_aND4wgTPJN4E3iTeBN4k3gTeJN4E3iTeBN4k3gTeJMf_IGCwxxTBJBTBJBTBJMMU
+JMEUwSQUJBQkFMAkwRTAJBQkFCQUwSQUwSTI-mjQ_MIEzyTeBN4k3gTeJN4E3iTeBN4k3gTeJN4E
+3iTH-iBgsMf__PDowSQEwSQEwSTDBCTBBMEkBCQEJATAFCQUBMAkBCQEJATBJATBJMj_aND4wv4A
+kODPJN4E3iTeBN4k3gTeJN4E3iTeBN4k3gTeJMf_IGCwx-748OgUBCQEFAQkBBQEJMMEJMEEFAQk
+BCQEJAQkBCQEJMEEFAQkBBQkwAQUBCTI-mjQ_ML_AJDgzyTeBN4k3gTeJN4E3iTeBN4k3gTeJN4E
+3iTH-iBgsMf__PDowSQEwSQEwSTDBCTBBMEkBCQEJAQkBCQEJMEEwSQEwCTABMAUJMj_aND4wv4A
+kODPJN4E3iTeBN4k3gTeJN4E3iTeBN4k3gTeJMf_IGCwx-748OgkBCQEJMEEJMUEFMAkBCQEJAQU
+BCQEJAQkBBTAJAQkBCQEFMAkBCQEJMj_aND4wv4AkODPJN4E3iTeBN4k3gTeJN4E3iTeBN4k3gTe
+JMf_IGCwx-748OgkBCQEJMEEJMUEwSQEJAQkwATAJAQkBCTABMAkBCQEJATBJAQkBCTI-mjQ_ML_
+AJDgxBTTJNQE3iTeBN4k3gTeJN4E3iTeBN4k3gTeJMf_IGCw-cL_aND4wgTDFNUk0wTeJN4E3iTe
+BN4k3gTeJN4E3iTeBN4kx-4gYLD9wv5o0PjCBMIU1yTSBN4k3gTeJN4E3iTeBN4k3gTeJN4E3iTI
+-iBgsP3A-mjQ_MMEwhTF-pjw_P4YKFDPJNIE3iTeBN4k3gTeJN4E3iTeBN4k3gTeJMn_IGCw-P5o
+0PjEBMIUxf6Y8Pj_GChQzyTSBN4k3gTeJN4E3iTeBN4k3gTeJN4E3iTeBN4kzQTCFMP_mPD4wf4Y
+KFDA-pjw_MD_GChQwP6Y8Pj_GChQwP6Y8Pj_GChQxSTSBN4k3gTeJN4E3iTeBN4k3gTeJN4E3iTe
+BN4kzQTCFML_mPD4-hgoUMD_mPD4-hgoUP6Y8Pj_GChQwP6Y8Pj_GChQ-pjw_P4YKFDA-pjw_P4Y
+KFDFJNIE3iTeBN4k3gTeJN4E3iTeBN4k3gTeJN4E3iTNBMIUwv6Y8Pj_GChQwP6Y8Pj_GChQ-pjw
+_ML_GChQ-pjw_P4YKFDA-pjw_P4YKFDFJNIE3iTeBN4k3gTeJN4E3iTeBN4k3gTeJN4E3iTNBMIU
+wv6Y8Pj_GChQwP6Y8Pj_GChQ-pjw_P4YKFDC-pjw_P4YKFD_mPD4-hgoUMYk0gTeJN4E3iTeBN4k
+3gTeJN4E3iTeBN4k3gTeJM0EwhTD-pjw_MH_GChQwP6Y8PjB-hgoUP6Y8PjA-hgoUMck0gTeJN4E
+3iTeBN4k3gTeJN4E3iTeBN4k3gTeJM0EwhTXJNIE3iTeBN4k3gTeJN4E3iTeBN4k3gTeJN4E3iTN
+BMMU1STTBN4k3gTeJN4E3iTeBN4k3gTeJN4E3iTeBN4kzQTEFNMk1ATeJN4E3iTeBN4k3gTeJN4E
+3iTeBN4k3gTeJM0EzyTeBN4k3gTeJN4E3iTeBN4k3gTeJN4E3iTeBN4k3gT94CTeBP3gJN4E-eAk
+3gT9zyTPBP3gJN4E-eAk3gT94CTeBP3PJMT_IGCwyRTgJNYU5CTeFOAk1hTkJN4U4CTWFOQk0-5o
+0PjGFP3MBMQkw-4gYLAEySTgBNYk5ATeJOAE1iTkBN4k4ATWJOQE0yT_aND4xBT9zgTDJML_IGCw
+BMok4ATWJOQE3iTgBNYk5ATeJOAE1iTkBNQk-mjQ_MIU-dAEwiTC-iBgsATKJOAE1iTkBN4k4ATW
+JOQE3iTgBNYk5ATUJP5o0PjCFNv_mPD4-hgoUPAEwiTC-iBgsATKJOAE2iTgBN4k4ATaJOAE3iTg
+BNok4ATUJP5o0PjCFNv_mPD4-hgoUPAEwiTC-iBgsATKJOAE2iTgBN4k4ATaJOAE3iTgBNok4ATU
+JP5o0PjCFNn_mPD4wf4YKFDA-pjw_MD_GChQwP6Y8PjA-hgoUP6Y8Pj_GChQwf6Y8PjA-hgoUMH_
+mPD4wf4YKFDbBMIkwv4gYLAEyRTSJM0E2iTgBN4UyCTWBNok4ATXFNIk0wTaJOAE1CT_aND4whTY
+-pjw_P4YKFDA-pjw_P4YKFD_mPD4-hgoUMD_mPD4-hgoUP6Y8Pj_GChQ-pjw_P4YKFD_mPD4-hgo
+UP6Y8Pj_GChQwP6Y8Pj_GChQ-pjw_P4YKFDeBMIkwv4gYLAEyRTSJM0E2iTgBN4UyCTWBNok4ATX
+FNIk0wTaJOAE1CT_aND4whTY-pjw_P4YKFDA-pjw_P4YKFD_mPD4wv4YKFD_mPD4-hgoUP6Y8Pj_
+GChQ-pjw_P4YKFD_mPD4-hgoUMD_mPD4-hgoUMD_mPD4wP4YKFDcBMIkwv4gYLAExxTA-vjw6NIU
+wCTb-gCQ4MIkwgTCJOAE2hTC-viowMD_YECIwBTOJNz_AJDgwiTCBMIk4ATVFMD__PDo0hTAJOH_
+AJDgwiTCBMIk4ATUJP5o0PjCFNj_mPD4-hgoUMD_mPD4-hgoUP6Y8Pj_GChQwv6Y8Pj_GChQwf6Y
+8Pj_GChQ-pjw_P4YKFDA-pjw_P4YKFDC-pjw_P4YKFDbBMIkwv4gYLAExxTA-vjw6NIUwCTb-gCQ
+4MIkwgTCJOAE2hTC-viowMAswBTOJNz_AJDgwiTCBMIk4ATVFMD__PDo0hTAJOH_AJDgwiTCBMIk
+4ATUJP5o0PjCFNn_mPD4wf4YKFDA-pjw_MH_GChQ-pjw_P4YKFDB-pjw_P4YKFDA-pjw_MD_GChQ
+wP6Y8PjB-hgoUNwEwiTC-iBgsATFFMD__PDowBTSBMAUwCTZ-gCQ4MIkwgTCJOAE1hTC-viowMIs
+wBTABM4UwCTa-gCQ4MIkwgTCJOAE0xTA-vjw6MAk0gTAFMAk3-4AkODCJMIEwiTgBNQk-mjQ_MIU
+-dAEwiTC-iBgsATFFMD__PDowBTSBMAUwCTZ-gCQ4MIkwgTCJOAE1hTC-viowMIswBTABM4UwCTa
+-gCQ4MIkwgTCJOAE0xTA-vjw6MAk0gTAFMAk3-4AkODCJMIEwiTgBNQk-mjQ_MMU-c4EwyTC-iBg
+sATDFMD__PDowCzAFMAswBTALMAUwCzAFMAswBTALMAUwATAFMAkx-4AkODKJMIEyiTgBNQUwP74
+qMDENMAUwgTANMoEwBTAJMr_AJDgyiTCBMok4ATRFMD__PDowCTWBMAUwCTN-gCQ4MokwgTKJOAE
+1CT_aND4xBT9zATEJML_IGCwBMMUwP748OjALMAUwCzAFMAswBTALMAUwCzAFMAswBTABMAUwCTH
+-gCQ4MokwgTKJOAE1BTA-viowMQ0wBTCBMA0ygTAFMAkyv4AkODKJMIEyiTgBNEUwP748OjAJNYE
+wBTAJM3_AJDgyiTCBMok4ATUJP5o0PjHBOAkygTCJMoEzyTC-iBgsATDFMD__PDowBTWBMAUwCTH
+-gCQ4MokwgTKJOAE1BTA-viowMI0wBTALMAUwATANMoEwBTAJMr_AJDgyiTCBMok4ATRFMD__PDo
+wCTEBMokxATAFMAkzf4AkODKJMIEyiTgBNQk-mjQ_McE4CTKBMIkygTPJML_IGCwBMMUwP748OjA
+FNYEwBTAJMf_AJDgyiTCBMok4ATUFMD__KjAwjTAFMAswBTABMA0ygTAFMAkyv4AkODKJMIEyiTg
+BNEUwP748OjAJMQEyiTEBMAUwCTN-gCQ4MokwgTKJOAE1CT_aND4xwTgJMoEwiTKBM8kwv4gYLAE
+wxTA-vjw6MAUyP746CDA-gDgMMD_WFBIwBTG-vjw6MAUwP4gYLDCFOok1f4AkODWFMD__KjAwjTA
+FMIEwDTKBMAUwCTCFP3T-gCQ4MQUwP748OjAJMQEwCTABMIkwATAJMQEwBTAJMIU9CTR-gCQ4NQk
+-mjQ_McE4CTCBMIkwgTfJML_IGCwBMMUwP748OjAFMj__OggwP4A4DDA-lhQSMAUxv748OjAFMD_
+IGCwwRTsJNT_AJDg1hTA-viowMI0wBTCBMA0ygTAFMAkwRT91P4AkODEFMD__PDowCTEBMAkwATC
+JMAEwCTEBMAUwCTBFPYk0P4AkODUJP5o0PjHBOAkwgTCJMIE3yTC-iBgsATDFMD__PDowBTG-vig
+AMD_WFBIwBTA-iio_MAkwBTEBMAUwP4gYLDAFO4k0-4AkODYFMD__KjAwBTALMAUwATOFMAkwBT9
+1f4AkODEFMD__PDowCTIBMIkyATAFMAkwBT4JM-_AJDg1CT_aND4xBT9zATEJML_IGCwBMMUwP74
+8OjAFMb__KAAwP5YUEjAFMD_KKj4wCTAFMQEwBTA-iBgsMAUwwTAFMYEFMcEFNQk0-4AkODYFMD_
+_KjAwBTALMAUwATOFMAkwBTD-vjw6MAUxQTAFNQEwRTHBMAU3-4AkODEFMD__PDowCTIBMIkyATA
+FMAkwBTCBMIUygQUyQQUwAQUwQQU0CTP-gCQ4NQk-mjQ_MMU-iBgsP3MFATD-mjQ_ML_IGCwBMMU
+wP748OjAFMT__ABIwP74oADA-vjoIMD_AOAwwP4oqPjA-lhQSMAUxP748OjAFMD_IGCwwBTCBBTA
+BBTPBBTUJNP_AJDg1izAFMD__KjAwizAFMAEwCzA-uAIqMAswDTALMA0wATAFMAkwBTC-vjw6BTA
+BBTFBBTUBBTABBTFBBTh-gCQ4MQUwP748OjAJMgEwiTIBMAUwCTAFMIEFM0EFMkEFMQEFNAkz-4A
+kODUJP5o0PjCFP4gYLD9zhQEwv5o0PjC-iBgsATDFMD__PDowBTE-vgASMD__KAAwP746CDA-gDg
+MMD_KKj4wP5YUEjAFMT__PDowBTA-iBgsMAUwgQUwAQUBMEUwATAFMAEwBQEFMAEwhQEFATAFMAE
+wBTABMEUxCTT-gCQ4NYswBTA-viowMIswBTABMAswP7gCKjALMA0wCzANMAEwBTAJMAUwv748OgU
+wwTAFMEEFMEEwBTABBTABBQEFATAFMQEFMAEFMAEwBTBBBTCBMAUwAQUBMAUwATAFMAEwRTBBMEU
+wATAFML_AJDgxBTA-vjw6MAkyATCJMgEwBTAJMAUwgQUwwTAFMAEwRTABMIUwATAFMEEwRQEwBTA
+BMIUwATAFMAEFATAFMQkz-4AkODUJP5o0PjCFP4gYLDf-vjw6CTqFP4AkODC-mjQ_ML_IGCwBMMU
+wP748OjAFMT__ABIwP5YUEjAFMIcwCTAFMQEwBTA-iBgsMAUwgTCFAQUwAQUwAQUwAQUBBQEFMAE
+FMEEwBTBBBTABBQEFMAEFMMk0-4AkODULMIUwP74qMDCFMIEwP7gCKjALMA0wCzANMAswATAFMAk
+wBTC-vjw6BTCBBTABBTABBTABBTABBQEFMAEFATAFMYEwRTABBTABBQEwhQEFMAEFATAFMEEFMAE
+FAQUwAQUBBTCBBTABBTB-gCQ4MQUwP748OjAJMgEwiTIBMAUwCTAFMIEwRTABBTABBQEFMAEFMAE
+FMEEFMAEFAQUwAQUwAQUwQQUwQQUwAQUBMAUxiTP-gCQ4NQk-mjQ_MIU-iBgsN-__PDoJOoU-gCQ
+4ML_aND4wv4gYLAEwxTA-vjw6MAUxP74AEjA-lhQSMAUwhzAJMAUxATAFMD_IGCwwBTCBBTABBQE
+FMAEFMAEFMAEFAQUBBTABBTBBBTCBBTABBQEFMAEFMMk0-4AkODULMIUwP74qMDCFMIEwP7gCKjA
+LMA0wCzANMAswATAFMAkwBTC-vjw6BTCBBTABBTABBTABBTABBQEFMAEFAQUxwQUwAQUBMIUwAQU
+wQTCFAQUwgTCFAQUwAQUBBTCBMIUwf4AkODEFMD__PDowCTIBMIkyATAFMAkwBTCBBTCBBTABBQE
+FMAEFMAEFMEEwhQEFMAEFMAEFMEEFMEEFMAEFAQUxyTP-gCQ4NQk-mjQ_MIU-iBgsN3__PDowSTA
+BMAkwAQkwAQk4BT_AJDgwv5o0PjC-iBgsATDFMD__PDowBTWBMAUwCTAFMIEFMAEFAQUwAQUwAQU
+wAQUwQQUwAQUwQQUwgQUwAQUBBTABBTDJNP_AJDg1izCFMD__KjAwBTCBMAswDTALMA0wCzANMAE
+wBTAJMAUwv748OgUwAQUBBTABBTABBTABBTABBQEFMAEFAQUxwQUwAQUBBTDBBTBBBTCBBTCBBTC
+BBTABBQEFMIEFMT_AJDgxBTA-vjw6MAkxgTGJMYEwBTAJMAUwgQUwgQUwAQUBBTABBTABBTBBBTC
+BBTABBTABBTBBBTBBBTABBQEFMckz-4AkODUJP5o0PjCFP4gYLDc-vjw6CTABCQEJMAEJAQkwAQk
+4BT_AJDgwv5o0PjC-iBgsATDFMD__PDowBTWBMAUwCTAFMIEFMAEFAQUwAQUBMEUBBTBBBTBBMAU
+BBTDBMAUwAQUwAQUwyTT-gCQ4NYswhTA-viowMAUwgTALMA0wCzANMAswDTABMAUwCTAFMP__PDo
+wBTBBMAUwQTAFMAEwBTBBMEUBBTHBBTABBTABMEUwAQUwgTBFAQUwwTBFAQUwAQUwATBFMAEwRTB
+-gCQ4MQUwP748OjAJMYExiTGBMAUwCTAFMIEFMMEwBTABBTABBTBBMAUwATBFMAEwRQEwRTBBMAU
+wATAFMAEFMckz-4AkODUJP5o0PjCFP4gYLDc-vjw6CTABCQEwiQEJMAEJOAU-gCQ4ML_aND4wv4g
+YLAEwxTA-vjw6MAswBTALMAUwCzAFMAswBTALMAUwCzAFMAEwBTAJMAU7iTT-gCQ4NgswBTA-vio
+wMAUwgTOFMAkwBT91f4AkODEFMD__PDowCTWBMAUwCTAFPgkz-4AkODUJP5o0PjCFP4gYLDc-vjw
+6CTABCQEJMIEJAQk4RT_AJDgwv5o0PjC-iBgsATDFMD__PDowCzAFMAswBTALMAUwCzAFMAswBTA
+LMAUwATAFMAkwRTsJNT_AJDg2CzAFMD__KjAwBTCBM4UwCTBFP3U-gCQ4MQUwP748OjAJNYEwBTA
+JMEU9iTQ-gCQ4NQk-mjQ_MIU-iBgsN3__PDowSTABMEkBMAk4hT_AJDgwv5o0PjC-iBgsATDFMD_
+uJjYwP748OjAFNIEwBzAFMAkwhTqJNX_AJDg2CzAFMD__KjAwCzAFMAEwCzKBMAUwCTCFP3T-gCQ
+4MQUwP4oqPjA-vjw6MAk0gTAHMAUwCTCFPQk0f4AkODUJP5o0PjCFP4gYLD9zhQEwv5o0PjC-iBg
+sATDFMD_uJjYwP748OjAFNIEwBzAFMAk-cf_AJDg2CzAFMD__KjAwCzAFMAEwCzKBMAUwCT9yv4A
+kODRFMD_KKj4wP748OjAJNIEwBzAFMAk-c3_AJDg1CT_aND4wxT_IGCw-cwUBMcUJMMUwP64mNjC
+-vjw6NIcwhTA-gCQ4MUk3gTeJNoswBTALMAUwP74qMDALMoEwBTA-gCQ4Mgk3gTeJNEUwP4oqPjC
+-vjw6NIcwhTA-gCQ4Msk3gTeJNQUBMQU-cz_aND4xATCFP4gYLDDFMD_uJjYwv748OjSHMIUwP4A
+kODFJN4E3iTaLMAUwCzAFMD__KjAwCzKBMAUwP4AkODIJN4E3iTRFMD_KKj4wv748OjSHMIUwP4A
+kODLJN4E3iTUFATH-mjQ_N4E3iTNBMIU-iBgsMUUwP64mNjWFMAExyTeBN4k2izAFMAswBTA-vio
+wMAsygTAFMD_AJDgyCTeBN4k0xTA-iio_NYUwATNJN4E3iTUFATH-mjQ_N4E3iTNBMIU-iBgsMUU
+wP64mNjWFMAExyTeBN4k2izAFMAswBTA-viowMAsygTAFMD_AJDgyCTeBN4k0xTA-iio_NYUwATN
+JN4E3iTUFATH-mjQ_N4E3iTNBMIU-iBgsMcUwP64mNjSFMAEySTeBN4k2izAFMAswBTA-viowM4U
+wP4AkODIJN4E3iTVFMD_KKj40hTABM8k3gTeJNQUBMf_aND43gTeJM0EwhT_IGCwxxTA-riY2NIU
+wATJJN4E3iTaLMAUwCzAFMD__KjAzhTA-gCQ4Mgk3gTeJNUUwP4oqPjSFMAEzyTeBN4k1BQEx-5o
+0PjeBN4kzQTCFP4gYLDJFNIEyyTeBN4k3CzAFNIEyiTeBN4k1xTSBNEk3gTeJNQUBMQU-cz_aND4
+xATCFP4gYLDJFNIEyyTeBN4k3CzAFNIEyiTeBN4k1xTSBNEk3gTeJNQUBMMU-c7_aND4wwTCFP4g
+YLDKBN4k3gTeJN4E3iTeBN4k3gTeJN4E3iTUFATCFP3Q-mjQ_MIEwhT_IGCwygTeJN4E3iTeBN4k
+3gTeJN4E3iTeBN4k1BQEwhT90P5o0PjCBMIU-iBgsMoE3iTeBN4k3gTeJN4E3iTeBN4k3gTeJNQU
+BMIU-dD_aND4wgTCFP4gYLDKBN4k3gTeJN4E3iTeBN4k3gTeJN4E3iTUFATCFNn_mPD4wf4YKFDA
+-pjw_MD_GChQwP6Y8PjA-hgoUP6Y8Pj_GChQwf6Y8PjA-hgoUMH_mPD4wf4YKFDb-mjQ_MIEwhT_
+IGCwygTeJN4E3iTeBN4k3gTeJN4E3iTeBN4k1BQEwhTY-pjw_P4YKFDA-pjw_P4YKFDC-pjw_P4Y
+KFD_mPD4-hgoUP6Y8Pj_GChQ-pjw_P4YKFD_mPD4-hgoUMD_mPD4-hgoUP6Y8Pj_GChQ3v5o0PjC
+BMIU-iBgsMoE3iTeBN4k3gTeJN4E3iTeBN4k3gTeJNQUBMIU2P6Y8Pj_GChQwP6Y8Pj_GChQwP6Y
+8PjB-hgoUP6Y8Pj_GChQ-pjw_P4YKFD_mPD4-hgoUP6Y8PjC-hgoUMD_mPD4wP4YKFDc-mjQ_MIE
+whT_IGCwygTeJN4E3iTeBN4k3gTeJN4E3iTeBN4k1BQEwhTZ-pjw_MH_GChQ-pjw_P4YKFDA-pjw
+_P4YKFD_mPD4-hgoUMH_mPD4-hgoUP6Y8Pj_GChQxf6Y8Pj_GChQ2-5o0PjCBMIU-iBgsMoE3iTe
+BN4k3gTeJN4E3iTeBN4k3gTeJNQUBMIU2-6Y8Pj_GChQwP6Y8PjB-hgoUP6Y8Pj_GChQwf6Y8Pj_
+GChQwP6Y8PjB-hgoUP6Y8PjB-hgoUNz_aND4wgTCFP4gYLDFFNoExyTeBN4k3hTKBNIk3gTeJN4E
+3iTeBN4k1BQEwhTZ-pjw_MD_GChQ8f5o0PjCBMIU-iBgsMUU2gTHJN4E3iTeFMoE0iTeBN4k3gTe
+JN4E3iTUFATDFP3O-mjQ_MMEwhT_IGCwwxTA-sDAwMD__PDo1hTA-hgoUMD_AJDgxSTeBN4k2hTC
+-viowMoUwv4AkODOJN4E3iTdFMYE1yTeBN4k1BQExBT9zP5o0PjEBMIU-iBgsMMUwP7AwMDA-vjw
+6NYUwP4YKFDA-gCQ4MUk3gTeJNoUwv74qMDKFML_AJDgziTeBN4k3RTGBNck3gTeJNQUBMf_aND4
+3gTeJM0EwhT_IGCwwxTA-vjw6MD_oIh4wATAJMAEwCTEBMAkwATAJMAEwhTA-gCQ4MX_IGCw3gTe
+JNgUwP74qMDCLMoEwhTA-gCQ4Mwk3gTeJNsUwP6Q8EDGFMAE1STeBN4k1BQEx-5o0PjeBN4kzQTC
+FP4gYLDDFMD__PDowP6giHjABMAkwATAJMQEwCTABMAkwATCFMD_AJDgxf4gYLDeBN4k2BTA-vio
+wMIsygTCFMD_AJDgzCTeBN4k2xTANMYUwATVJN4E3iTUFATH-mjQ_N4E3iTNBMIU-iBgsMMUwP74
+8OjA-qCIeMQEwCTCBMIkxATCFMD_AJDgxf4gYLDeBN4k1hTA-viowMAsxATELMYEwBTA-gCQ4Mok
+3gTeJNcUwjTA-hBQWMA0wjzANMAUwgTRJN4E3iTUFATH-mjQ_N4E3iTNBMIU-iBgsMMUwP748OjA
+-qCIeMQEwCTCBMIkxATCFMD_AJDgxf4gYLDeBN4k1hTA-viowMAsxATELMYEwBTA-gCQ4Mok3gTe
+JNcUwjTAPMA0wjzANMAUwgTRJN4E3iTUFATH-mjQ_N4E3iTNBMIU-iBgsMMUwP748OjA-qCIeMAE
+wCTABMAkwATGJMAExBTA-gCQ4MX_IGCw3gTeJNYUwP74qMDALMQExCzABMAswgTAFMD_AJDgyiTe
+BN4k1RTC-gCwUMD_kPBAyv4AsFDAFMIEzyTeBN4k1BQExBT9zP5o0PjEBMIU-iBgsMMUwP748OjA
+-qCIeMAEwCTABMAkwATGJMAExBTA-gCQ4MX_IGCw3gTeJNYUwP74qMDALMQExCzABMAswgTAFMD_
+AJDgyiTeBN4k1RTCNMD_kPBAyv4AsFDAFMIEzyTeBN4k1BQEwxT9zv5o0PjDBMIU-iBgsMMUwP74
+8OjA-qCIeMAEwCTABMAkxATCJMAExBTA-gCQ4MIU-cX_IGCw0hTA-viowMAs1gTAFMD_AJDgwhTW
+JMwE3iTTFMD_kPBAwBTANM4UwDTAFMAExBT0BNEk1BQEwhT90P5o0PjCBMIU-iBgsMMUwP748OjA
+-qCIeMAEwCTABMAkxATCJMAExBTA-gCQ4MEU-cf_IGCw0RTA-viowMAs1gTAFMD_AJDgwRTYJMsE
+3iTTFMA0wBTANM4UwDTAFMAEwxT2BNAk1BQEwhTi-pjw_P4YKFDp-mjQ_MIEwhT_IGCwwxTA-sDA
+wMD__PDo1hTA-hgoUMD_AJDgwBT9ySTQFMD__KjAwCzWBMAUwP4AkODAFNokygTeJNEUwDTCFMA0
+wv74kGDGNMIUwDTCFMAEwBT4BM8k1BQEwhT90P5o0PjCBMIU-iBgsMMUwP7AwMDA-vjw6NYUwP4Y
+KFDA-gCQ4MAUwv748OgUwAQU1ATAFNwEFMgk0BTA-viowMD_YECI1gTAFMD_AJDgwBTC-vjw6BTV
+JMr_AJDg3iTRFMA0whTANML__JBgxjTCFMA0whTABMAUwv748OjAFMEEFMAEwBTUBMAUwgQUwQQU
+yf4AkODPJNQUBMIU2-6Y8PjA-hgoUP6Y8Pj_GChQwP6Y8PjA-hgoUMD_mPD4wf4YKFDB-pjw_MD_
+GChQ3-5o0PjCBMIU-iBgsMUUwv748OjCFNL_AJDgwhTC-vjw6BTABBTTBBTABBTbBBTIJNAUwP74
+qMDA-mBAiNYEwBTA-gCQ4MAUwv748OgU1STK-gCQ4N4k0RTANMQUwDTA-viQYMY0wBTANMQUwATA
+FMP__PDoFMUEFNUEFMEEFMMEFMj_AJDgzyTUFATCFNv_mPD4-hgoUP6Y8Pj_GChQ-pjw_P4YKFDA
+-pjw_P4YKFDA-pjw_P4YKFDA-pjw_P4YKFD_mPD4-hgoUMD_mPD4-hgoUN7_aND4wgTCFP4gYLDF
+FML__PDowhTS-gCQ4MIUwv748OgUBBTBBMAUwAQUBMAUwATAFMUEFMMEwBTABMAUBBTABMAUBBTB
+BMAUwATBFMAEwhTABMEUwSTQFMD__KjAwP5gQIjWBMAUwP4AkODAFML__PDoFMMEwBTABMEUwQTB
+FMMkyv4AkODeJNEUwDTEFMA0wP74kGDGNMAUwDTEFMAEwBTD-vjw6BTABMAUwQQUwAQUwAQUxATB
+FMEEwBTBBBTBBBTDBBTI-gCQ4M8k1BQEwhTb-pjw_P4YKFD_mPD4-hgoUP6Y8Pj_GChQwP6Y8Pj_
+GChQwP6Y8Pj_GChQwP6Y8Pj_GChQ-pjw_ML_GChQ3v5o0PjCBMIU-iBgsMcUwP7AwMDA-vjw6MD_
+GChQwCTAPMIkwDzCJMgUwgTAFMEEFMAEFATAFMEEFMAEFMQEFMIEFMAEFAQUBBQEFAQUBBQEFAQU
+wAQUBBTABBTABBTBBBTEJNAUwP74qMDA-uAIqMD_YECIwhTKLMI0wATAFMAkwBTC-vjw6BTCBBTA
+BBQEFMAEFAQUxv4AkODKJPEUwP6Q8EDCFMD_ALBQwv6Q8EDA-gCwUML_kPBAwP4AsFDCFMD_kPBA
+whTAJMAUw-748OgUwQQUwQQUwAQUwAQUxAQUwAQUwgQUwAQUwQQUwwQUyCTlFP4AkODCFNv_mPD4
+-hgoUMH_mPD4-hgoUMD_mPD4-hgoUMD_mPD4-hgoUMD_mPD4-hgoUP6Y8Pj_GChQ4QTGFCTHFMD_
+wMDAwP748OjA-hgoUMAkwDzCJMA8wiTIFMIEFAQUwATCFAQUwgQUwAQUxAQUwgQUwAQUBBQEFAQU
+BBQEFAQUBMIUBBTABBTABBTCBMAUwiTQFMD__KjAwP7gCKjALMIUyizCNMAEwBTAJMAUwv748OgU
+wgTCFAQUwAQUwATAFMT_AJDgyiTxFMD_kPBAwhTA-gCwUML_kPBAwP4AsFDC-pDwQMD_ALBQwhTA
+-pDwQMIUwCTAFMP__PDoFMEEFMEEFMAEFMAEFMQEFMAEFMAEwRTABBTBBBTDBBTIJOUU-gCQ4MIU
+2-6Y8Pj_GChQwf6Y8Pj_GChQ-pjw_MH_GChQ-pjw_P4YKFDA-pjw_P4YKFDA-pjw_MH_GChQ3gTC
+-mjQ_ML_IGCwBMQkwxTA-sDAwMD__PDowP4YKFDANMI8wDTCPMAkxhTCBBTABBQEFMIEFMIEFMAE
+FMQEFMAEFAQUwAQUBBTBBBQEFMEEFAQUwgQUwAQUwAQUxAQUwf4AkODQFMD__KjAwizAFM4swATC
+FMAkwBTC-vjw6BTCBBTCBBTABBTCBBTD-gCQ4Mok4ATPFMA02hTAJMAUw-748OgUwQQUwQQUwQTB
+FMQEwRTABBTABBTABBTBBBTDBBTIJNH_AJDg0iT_aND4wQQU-dAEwiTC-iBgsATEJMMUwP7AwMDA
+-vjw6MD_GChQwDTCPMA0wjzAJMYUwgQUwAQUwATBFAQUwwTAFMYEwBTBBMAUwAQUwQQUBBTBBBTA
+BMEUBBTABBTBBMAUBMEUwv4AkODQFMD__KjAwizAFM4swATCFMAkwBTC-vjw6MIUwATBFAQUwAQU
+BMEUxP4AkODKJOAEzxTANNoUwCTAFMP__PDowBQEwRTABMAUwgQUBMIUBBTDBMEUwATAFMAEFMME
+FMgk0f4AkODSJP5o0PjBBMAU-c4EwyTC-iBgsATEJMUUxDTAFMA0wBTANMI8wCTEFP3JBNAUwP7g
+CKjA-viowMA0wBTONMAEwDTAFMAkwBTa-gCQ4Mok4ATPFMD_kPBAwhTCNNAUwCTCFM-__PDowBTF
+BBTNBBTBBBTJJNH_AJDg0iT_aND4wQTBFP3MBMQkwv4gYLAExCTFFMQ0wBTANMAUwDTCPMAkxRT9
+xwTRFMD_4AiowP74qMDANMAUzjTABMA0wBTAJMEU2P4AkODLJOAEzxTA-pDwQMIUwjTQFMAkwxT2
+JNIE0iT_aND4wQTkJN4EzSTC-iBgsATIJMM8wDTOPMAkxBT9xQTUFMD__KjAxP7gCKjAFMY0wATE
+FMAkxBTW-gCQ4Mwk4ATPFMQkwBTA-pDwQM4UwCTGFPQk0wTSJP5o0PjFBOAk3gTNJML_IGCwBMgk
+wzzANM48wCTHBN4k4ATUFMD__KjAxP7gCKjAFMY0wATEFMAkyv4AkODeJOAEzxTEJMAUwP6Q8EDO
+FMAkzwTeJOAE0iT_aND4xQTgJN4EzSTC-iBgsATIJMM8wDTA-gCwUMb_kPBAxjzAJMUE3iTgBNQU
+wP74qMDWFMAkyv4AkODeJOAEzyTGFNAk0QTeJOAE0iT_aND4xQTgJN4EzSTC-iBgsATIJMM8wDTA
+-gCwUMb_kPBAxjzAJMUE3iTgBNQUwP74qMDWFMAkyv4AkODeJOAEzyTGFNAk0QTeJOAE0iT_aND4
+xQTgJN4E0CT_IGCwBMAkwgTCJMM8wP4AsFDA-vjIqMg0wP6Q8EDC-hBQWMAkxQTeJPAEwiTCFMD_
+_KjA0hTAJMz_AJDg3iTwBMEkwwQk4wTeJPAEwhQEwf5o0PjBFP3MBMck-iBgsATAJMIEwiTDPMD_
+ALBQwP74yKjINMD_kPBAwv4QUFjAJMUE3iTwBMIkwhTA-viowNIUwCTM-gCQ4N4k8ATBJMMEJOME
+3iTwBMIUBMH_aND4wBT9zgTGJP4gYLAEwCTCBMIkwzzANMD_ALBQwP74yKjENMD_kPBAxP4QUFjA
+JMUE3iTwBMIkwgTAFML_4AioyhTCJM4E3iTwBMIkwgQk4wTeJPAEwhQEwf5o0PgU-dAExST_IGCw
+BMAkwgTCJMM8wP6Q8EDA-gCwUMD__MioxDTA-pDwQMT_EFBYwCTFBN4k8ATCJMIEwBTC-uAIqMoU
+wiTOBN4k8ATCJMIEJOME3iTwBMIUBMH_aND4FOb_mPD4-hgoUOUExST_IGCwBMgkwzzUJMUE3iTg
+BMokwgTKJMAUyiTSBN4k4ATKJMIEyiTgBN4k4ATKJMIEwiT_aND4whTm-pjw_P4YKFDlBMUk-iBg
+sATIJMM81CTFBN4k4ATKJMIEyiTAFMok0gTeJOAEyiTCBMok4ATeJOAEyiTCBMIk-mjQ_MIU1-6Y
+8PjB-hgoUP6Y8Pj_GChQwP6Y8Pj_GChQwP6Y8PjB-hgoUP6Y8PjC-hgoUMD_mPD4wP4YKFDA-pjw
+_MD_GChQ-pjw_P4YKFDZBMUk-iBgsATIJOAE3iTgBMokwgTKJOAE3iTgBMokwgTKJOAE3iTgBMok
+wgTCJP5o0PjCFNb_mPD4-hgoUML_mPD4-hgoUMD_mPD4-hgoUP6Y8Pj_GChQw-6Y8Pj_GChQwf6Y
+8Pj_GChQwP6Y8Pj_GChQ-pjw_P4YKFD_mPD4-hgoUP6Y8Pj_GChQ2ATFJP4gYLAEyCTgBN4k4ATK
+JMIEyiTgBN4k4ATKJMIEyiTgBN4k4ATKJMIEwiT_aND4whTX-pjw_MD_GChQwP6Y8Pj_GChQwP6Y
+8Pj_GChQwP6Y8PjA-hgoUMH_mPD4-hgoUMH_mPD4wv4YKFD_mPD4-hgoUP6Y8Pj_GChQ-pjw_P4Y
+KFDYBMYU-iBgsOoE3iTgBMIkwgTCJPAE3iTgBMIkwgTCJPAE3iTgBMIkwgTCJMYUBMIU2f6Y8Pj_
+GChQwP6Y8PjB-hgoUML_mPD4-hgoUMD_mPD4-hgoUMH_mPD4-hgoUML_mPD4-hgoUMH_mPD4-hgo
+UNgExhQk6gTeJOAEwiTCBMIk8ATeJOAEwiTCBMIk8ATeJOAEwiTCBMIkxhQEwhTW-pjw_MH_GChQ
+w-6Y8Pj_GChQ-pjw_MH_GChQwv6Y8PjA-hgoUMD_mPD4wf4YKFD_mPD4-hgoUMH_mPD4-hgoUNgE
+xhQk6gTeJOAEwiTCBMIk8ATeJOAEwiTCBMIk8ATeJOAEwiTCBMIkxhQEwhTc-pjw_MD_GChQ7gTG
+FCTqBN4k4ATCJMIEwiTwBN4k4ATCJMIEwiTwBN4k4ATCJMIEwiTGFATDFP3OBMP_aND4wv4gYLAE
+yCTgBN4k4ATaJOAE3iTgBNok4ATeJOAE0iT_aND4xBT9zATEJML_IGCwBMgk4ATeJOAE2iTgBN4k
+4ATaJOAE3iTgBNIk-mjQ_MUE4CTeBM0kwv4gYLAEyCQU0iTLBN4k4ATYFNIkzgTeJOAE0f4AsFDK
+JMj__PDowiTP-gCQ4N4k4ATSJP5o0PjFBOAk3gTNJML_IGCwBMgkFNIkywTeJOAE2BTSJM4E3iTg
+BNE0yiTI-vjw6MIkz-4AkODeJOAE0iT_aND4xQTgJN4EzSTC-iBgsATHFMD__PDo0hTAJMn_AJDg
+3iTkBNIUwP748OjSFMAkzP4AkODeJOQEyzTC-gCAUMQ0wATANMAkxP748OjAFMIEwCTN-gCQ4N4k
+5ATOJP5o0PjFBOAk3gTNJML_IGCwBMcUwP748OjSFMAkyf4AkODeJOQE0hTA-vjw6NIUwCTM-gCQ
+4N4k5ATLNML_AIBQxDTABMA0wCTE-vjw6MAUwgTAJM3_AJDg3iTkBM4k-mjQ_MUE4CTeBM0kwv4g
+YLAExRTA-vjw6MD_oIh40gTAFMD_IGCwx-4AkODeJOQE0BTA-vjw6MAk0gTAFMAkyv4AkODeJOQE
+y-4AgFDE-qhQMMAExCzAJML__PDowBTA-sDAwMD_GChQwgTAJMv_AJDg3iTkBM4k-mjQ_MQU-cwE
+xCTC-iBgsATFFMD__PDowP6giHjSBMAUwP4gYLDH-gCQ4N4k5ATQFMD__PDowCTSBMAUwCTEFP3T
+-gCQ4MT_AIBQxCzABMQswCTC-vjw6MAUwP7AwMDA-hgoUMIEwCTL-gCQ4N4k5ATOJP5o0PjDFP3O
+BMcU-iBgsMMUwP748OjA-qCIeNYEwBTA-iBgsMX_AJDg3iT0FMD__PDowCTEBMAkwATAJMAEwCTA
+BMAkwgTAFMAkwRT91CTELMD_AIBQwCzEBMD_QCgwwP6oUDDAJMD__PDowBTA-sDAwMD_gHCYwv4Y
+KFDABMAky-4AkODeJPQUBMIU-dAExhQkwxTA-vjw6MD_oIh41gTAFMD_IGCwxf4AkODeJPQUwP74
+8OjAJMQEwCTABMAkwATAJMAEwCTCBMAUwCTAFP3VJMT_qFAwwP4AgFDALMQEwP5AKDDA-qhQMMAk
+wP748OjAFMD_wMDAwP6AcJjC-hgoUMAEwCTL-gCQ4N4k9BQEwhTc-pjw_P4YKFDvBMYUJMMUwP74
+8OjA-qCIeML_eCBQwv4A4DDC-vjw6ML__HCowiTC-vjw6MAUwP4AkODF-iBgsN4E3iTUFMD__PDo
+wCTCBMAkwATAJMwEwBTA-gCQ4MAU2P748OjAFMEEwBTJBBTXBBTMJMT_4GgAwP6oUDDE-kAoMMT_
+qFAwwATAFMD_wMDAwP6AcJjC-hgoUMAEwP4AkODNJN4E3iTUFATCFNz_mPD4-hgoUO-_aND4wgTC
+FP4gYLDDFMD__PDowP6giHjCDML_AOAwwv748OjC-vhwqMIkwv748OjAFMD_AJDgxf4gYLDeBN4k
+1BTA-vjw6MAkwgTAJMAEwCTMBMAUwP4AkODAFNf__PDoFMIEFMsEFNcEFMwkxDzA-qhQMMT_QCgw
+xP6oUDDABMAUwP7AwMDA-oBwmML_GChQwATA-gCQ4M0k3gTeJNQUBMIU2-6Y8PjC-hgoUMD_mPD4
+wP4YKFDA-pjw_P4YKFDA-pjw_P4YKFDA-pjw_MH_GChQ3v5o0PjCBMIU-iBgsMMUwP748OjA-qCI
+eMIMwv4A4DDC-vjw6ML__HCowiTC-vjw6MAUwP4AkODCFNv_IGCwxATeJNQUwP748OjAJMQEwCTA
+BMAkwATAJMAEwCTCBMAUwP4AkODAFMP__PDowBTABMEUwQTAFMEEwBTBBBTCBBTHBMEUBMEUwQTA
+FMAEFATAFMAEwBTBBMEUBMIUwATAFMAEFATAFMAkxDzA-qhQMML_QCgwxgTAFMD_wMDAwP6AcJjC
+-hgoUMAEwP4AkODGFNYkzwTeJNQUBMIU3P6Y8Pj_GChQwf6Y8Pj_GChQwP6Y8Pj_GChQ-pjw_P4Y
+KFDA-pjw_P4YKFD_mPD4-hgoUOH_aND4wgTCFP4gYLDDFMD__PDowP6giHjCDML_AOAwwv748OjC
+-vhwqMIkwv748OjAFMD_AJDgwRTd-iBgsMME3iTUFMD__PDowCTEBMAkwATAJMAEwCTABMAkwgTA
+FMD_AJDgwBTC-vjw6BTABBQEFMAEFAQUwAQUBBTABBQEwhQEwhTEBBTCBBTABBTCBBQEwBTEBBQE
+FMMEFMEEFMAEFATAFMIkxDzA-qhQMML_QCgwxgTAFMD_wMDAwP6AcJjC-hgoUMAEwP4AkODFFNgk
+zgTeJNQUBMIU3P6Y8Pj_GChQwf6Y8Pj_GChQwP6Y8Pj_GChQ-pjw_P4YKFDA-pjw_P4YKFDA-pjw
+_MD_GChQ3-5o0PjCBMIU-iBgsMMUwP748OjA-qCIeML__KAAwv7gCKjC-gCAUML__PDowiTCBMAU
+wP4AkODAFN-_IGCwwgTeJNQUwP748OjAJMIEwCTABMAkzATAFMD_AJDgwBTC-vjw6BTABBQEFMAE
+FATCFAQUwAQUwAQUwgQUxgQUwgQUwAQUwATBFAQUwwTBFAQUwwQUwQTCFAQUwyTEPMD_qFAwwP5A
+KDDGBMAUwP7AwMDA-oBwmML_GChQwATA-gCQ4MYU2iTNBN4k1BQEwhTc-pjw_P4YKFDB-pjw_P4Y
+KFDA-pjw_P4YKFDA-pjw_MH_GChQwv6Y8Pj_GChQ3v5o0PjCBMIU-iBgsMMUwP748OjA-qCIeMIc
+wjTC-gCAUML__PDowiTCBMAUwP4AkODAFMP__PDowBTABBTCBMEUwQTAFMAEFMb_IGCwwv4AkODe
+JNQUwP748OjAJMIEwCTABMAkzATAFMD_AJDgwBTC-vjw6BTABBQEFMAEFAQUwgQUwAQUwAQUwgQU
+xgQUwgQUwAQUBBTABBQEFMIEFMAEFAQUwwQUwQQUwgQUwyTEPMD_qFAwwP5AKDDGBMAUwP7AwMDA
+-oBwmML_GChQwATA-gCQ4MYUwv748OjBFMAEFMIEwxQEFMUkzf4AkODeJNQUBMIU3f6Y8PjA-hgo
+UMD_mPD4wP4YKFDD-pjw_P4YKFD_mPD4wf4YKFDf-mjQ_MIEwhT_IGCwwxTA-vjw6MD_oIh4whzC
+NML_AIBQwv748OjCJMIEwBTA-gCQ4MAUwv748OgUwAQUBBTCBBTABBQEFMAEFAQUxv4gYLDC-gCQ
+4N4k1BTA-vjw6MAkwgTGJMAEwCTABMAkwgTAFMD_AJDgwBTD-vjw6MAUwAQUwAQUwATBFMAEwBTB
+BBTCBBTHBMEUBBTABBTABMEUBBTDBMEUwATBFMEEwBTABMEUBBTDJMQ8wP5AKDDA-qhQMMQ8wATA
+-viQYMAUwP6AcJjAFMAEwP4AkODIFML__PDoFMAEFAQUxAQUwQQUxSTN-gCQ4N4k1BQEwhTm-pjw
+_MD_GChQ5P5o0PjCBMIU-iBgsMMUwP748OjA-qCIeMIcwjTC-gCAUML__PDowiTCBMAUwP4AkODA
+FML__PDoFMAEFAQUwAQUBBTABBQEFMAEFAQUxv4gYLDC-gCQ4N4k1BTA-vjw6MAkwgTGJMAEwCTA
+BMAkwgTAFMD_AJDgwBT91STEPMD_QCgwwP6oUDDEPMD__PDowP74kGDAFMD_gHCYwBTABMD_AJDg
+yBTC-vjw6BTABBQEFMQEFMEEFMAEFMIkzf4AkODeJNQUBMMU-c7_aND4wwTCFP4gYLDDFMD__PDo
+wP6giHjCBML_KKj4wgTCFMIkwgTAFMD_AJDgwBTC-vjw6BTABBQEFAQUwATBFMAEwhQEFMb_IGCw
+wv4AkODeJNQUwP748OjAJMIEyCTABMAkxATAFMD_AJDgwBT91STEPMT_qFAwxP748OjA-lhQSMD_
+_JBgwBTABMD_ALBQyP4AkODAFML__PDowRTABBTEBBTBBBQEFMP_IGCwzf4AkODeJNQUBMQU-cz_
+aND4xATCFP4gYLDDFMD__PDowP6giHjCBMIcwgTCFMIkwgTAFMD_AJDgwBTC-vjw6BTABBQEwBTB
+BBTCBBTABBQEFMb_IGCwwv4AkODeJNQUwP748OjAJMIEyCTABMAkxATAFMD_AJDgwBT91STEPMT_
+qFAwxP748OjA-lhQSMD__JBgwBTABMA0yP4AkODAFML__PDoFMIEFMQEFMEEwBTE-iBgsM3_AJDg
+3iTUFATH-mjQ_N4E3iTNBMIU-iBgsMMUwP748OjA-qCIeMIEwhzCBMIUwiTCBMAUwP4AkODAFML_
+_PDoFMAEFAQUBBTABBTCBBTABBQEFMb_IGCwwv4AkODeJNQUwP748OjAJMIExiTABMAkwATAJMIE
+wBTA-gCQ4MAU1-748OgU_STEPMD_qFAwwv5AKDDA-qhQMMD_QCgwwgTE-gCAUMQ0wATC-gCQ4MAU
+wv748OgUwgQUxAQUwQQUBBTDJM3_AJDg3iTUFATH-mjQ_N4E3iTNBMIU-iBgsMMUwP748OjA-qCI
+eMIEwhzCBMIUwiTCBMAUwP4AkODAFMP__PDowBTABBTABBQEFMIEFMAEFATCFMP_IGCwwv4AkODe
+JNQUwP748OjAJMIExiTABMAkwATAJMIEwBTA-gCQ4MAU1-748OgU_STEPMD_qFAwwv5AKDDA-qhQ
+MMD_QCgwwgTE-gCAUMQ0wATC-gCQ4MAUwv748OgUwgTCFMEEFMEEFMAEFMIkzf4AkODeJNQUBMf_
+aND43gTeJM0EwhT_IGCwwxTA-vjw6MD_oIh41gTAFMD_AJDgwBTf-iBgsMIE3iTUFMD__PDowCTC
+BMgkwATAJMQEwBTA-gCQ4MAUw-748OjBFAQUBMAUwATAFMEEwBTABMIUwATAFMAEFATAFO0kxDzA
+-qhQMML_QCgwwP6oUDDA-kAoMML_AAAAwP4AgFDE-qhQMMAExP5AKDDA-gCQ4MD_GChQ2iTNBN4k
+1BQEx-5o0PjeBN4kzQTCFP4gYLDDFMD__PDowP6giHjWBMAUwP4AkODBFN3_IGCwwwTeJNQUwP74
+8OjAJMIEyCTABMAkxATAFMD_AJDgwBTC-vjw6BTCBMAUwQQUwAQUwgQUwAQUwQQUwAQUBMAU7yTE
+PMD_qFAwwv5AKDDA-qhQMMD_QCgwwv4AAADA-gCAUMT_qFAwwATE-kAoMMD_AJDgwf4YKFDYJM4E
+3iTUFATH-mjQ_N4E3iTNBMIU-iBgsMMUwP7AwMDA-vjw6MD_oIh40gTAFMD_GChQwP4AkODCFNv_
+IGCwxATeJNQUwP64mNjA-vjw6MAk0gTAHMAUwP4AkODAFML__PDoFMIEFMIEwhTABMEUwAQUwQQU
+wAQUBBTwJMT_qFAwwP5AKDDG-gAAAMT_qFAwwP4AgFDALMQEwP5AKDDC-gCQ4ML_GChQ1iTPBN4k
+1BQExBT9zP5o0PjEBMIU-iBgsMMUwP7AwMDA-vjw6MD_oIh40gTAFMD_GChQwP4AkODF-iBgsN4E
+3iTUFMAcwP748OjAJNIEwBzAFMD_AJDgwBTC-vjw6BTCBBTCBBTCBBTABBTABBTBBBTABBQEFPAk
+xP6oUDDA-kAoMMb_AAAAxP6oUDDA-gCAUMAsxATA-kAoMML_AJDgyyTeBN4k1P4YKFAEwxT9zv5o
+0PjDBMIU-iBgsMMUwP7AwMDC-vjw6NIUwv4YKFDA-gCQ4MUk3gTeJNQUwBzC-vjw6NIcwhTA-gCQ
+4MAUw-748OjBFAQUwwTBFMAEwRTBBMAUwATAFMAEFPAkxP6oUDDE-kAoMMA8xP6oUDDAPMAsxP5A
+KDDG-gCQ4Msk3gTeJNQUBMIU-dD_aND4wgTCFP4gYLDDFMD_wMDAwv748OjSFML_GChQwP4AkODF
+JN4E3iTUFMAcwv748OjSHMIUwP4AkODAFP3VJMT_qFAwxP5AKDDAPMT_qFAwwDzALMT_QCgwxgTL
+JN4E3iTUFATCFN7_mPD4-hgoUML_mPD4-hgoUMD_mPD4wP4YKFDk-mjQ_MIEwhT_IGCwxRTA-sDA
+wNb_GChQwATHJN4E3iTWFMAc1hTABMMU-dQkxP6oUDDA-kAoMML_AAAAwDzA-qhQMML_QCgwwDzA
+-qhQMML_QCgwxv6oUDDABMsk3gTeJNT_GChQBMIU3v6Y8Pj_GChQxv6Y8Pj_GChQ5P5o0PjCBMIU
+-iBgsMUUwP7AwMDW-hgoUMAExyTeBN4k1hTAHNYUwATEFP3TJMQswP5AKDDC-gAAAMA8wP6oUDDC
+-kAoMMA8wP6oUDDC-kAoMMb_qFAwwATLJN4E3iTU-hgoUATCFNj_mPD4-hgoUMD_mPD4-hgoUP6Y
+8PjC-hgoUP6Y8PjA-hgoUMH_mPD4-hgoUMH_mPD4wf4YKFDe-mjQ_MIEwhT_IGCwxxTA-sDAwNL_
+GChQwATJJN4E3iTYFMAc0hTABMwk3gTeJNEswP5AKDDC-gAAAMA8wP6oUDDC-kAoMMA8wP6oUDDA
+-kAoMMb_qFAwwgTLJN4E3iTU-hgoUATCFNj_mPD4-hgoUMD_mPD4-hgoUMD_mPD4-hgoUML_mPD4
+-hgoUMH_mPD4-hgoUMD_mPD4-hgoUOH_aND4wgTCFP4gYLDHFMD_wMDA0v4YKFDABMkk3gTeJNgU
+wBzSFMAEzCTeBN4k0SzA-kAoMML_AAAAwDzA-qhQMML_QCgwwDzA-qhQMMD_QCgwxv6oUDDCBMsk
+3gTeJNT_GChQBMIU2P6Y8Pj_GChQwP6Y8Pj_GChQwP6Y8Pj_GChQwv6Y8Pj_GChQwf6Y8Pj_GChQ
+wf6Y8PjA-hgoUN-_aND4wgTCFP4gYLDJFNIEyyTeBN4k2hTSBM4k3gTeJNH_QCgwwP4AAADE-qhQ
+MMD_QCgwxDzALMb_qFAwxATLJN4E3iTU-hgoUATCFNj_mPD4-hgoUMD_mPD4-hgoUMD_mPD4-hgo
+UML_mPD4-hgoUMH_mPD4-hgoUMP_mPD4-hgoUN7_aND4wgTCFP4gYLDJFNIEyyTeBN4k2hTSBM4k
+3gTeJNH_QCgwwP4AAADE-qhQMMD_QCgwxDzALMb_qFAwxATLJN4E3iTU-hgoUATCFNn_mPD4wf4Y
+KFDB-pjw_MD_GChQ-pjw_MH_GChQwP6Y8PjA-hgoUP6Y8PjB-hgoUN-_aND4wgTCFP4gYLDKBN4k
+3gTeJN4E3iTeBN4k3gTeJN4E3iTUFATCFP3Q-mjQ_MIEwhT_IGCwygTeJN4E3iTeBN4k3gTeJN4E
+3iTeBN4k1BQEwxT9zv5o0PjDBMIU-iBgsMoE3iTeBN4k3gTeJN4E3iTeBN4k3gTeJNQUBMQU-cz_
+aND4xATCFP4gYLDKBN4k3gTeJN4E3iTeBN4k3gTeJN4E3iTUFATH-mjQ_N4E3iTNBMIU-iBgsMoE
+3iTeBN4k3gTeJN4E3iTeBN4k3gTeJNQUBMf_aND43gTeJM0EwhT_IGCwygTeJN4E3iTeBN4k3gTe
+JN4E3iTeBN4k1BQEx-5o0PjeBN4kzQTCFP4gYLDKBN4k3gTeJN4E3iTeBN4k3gTeJN4E3iTUFATH
+-mjQ_N4E3iTNBMIU-iBgsMoE3iTeBN4k3gTeJN4E3iTeBN4k3gTeJNQUBMf_aND43gTeJNH_IGCw
+BMcU1CT9zQTeJP3gBN4k-eAE1CT_aND4xwT9zyTC-iBgsATHFNQk-c0E3iT94ATeJP3gBNQk-mjQ
+_McE-c8kwv4gYLAExRTAJNQUwCTLBNYk5ATeJOAE1iTkBN4k4ATWJOQE1CT_aND4xwTgJNYE0yTC
+-iBgsATFFMAk1BTAJMsE1iTkBN4k4ATWJOQE3iTgBNYk5ATUJP5o0PjHBOAk1gTTJML_IGCwBMMU
+wP748OjAFMAkxATE-hBQWMAEwCTEFMAkyf4AkODWJOQE3iTgBNYk5ATeJOAE1iTkBNQk-mjQ_McE
+4CTWBNMkwv4gYLAEwxTA-vjw6MAUwCTEBMQ8wATAJMQUwCTJ-gCQ4NYk5ATeJOAE1iTkBN4k4ATW
+JOQE1CT_aND4xwTgJNYE0yTC-iBgsATFFMIkwv748OjA-vgASMQ8wgTAJMIUwCTJ-gCQ4Nok4ATe
+JOAE2iTgBN4k4ATaJOAE1CT_aND4xwTgJNoEzyTC-iBgsATFFMIkwv748OjANMQ8wgTAJMIUwCTJ
+-gCQ4Nok4ATeJOAE2iTgBN4k4ATaJOAE1CT_aND4xwTgJNoEzyTC-iBgsATFFMAkxP748OjANMD_
+_KAAwDTA-rgAOMA8xCTAFMAkyf4AkODaJOAE3iTgBNok4ATeJOAE2iTgBNQk-mjQ_McE4CTaBM8k
+wv4gYLAExRTAJMT__PDowDTAHMA0wP64ADjAPMQkwBTAJMn_AJDg2iTgBN4k4ATaJOAE3iTgBNok
+4ATUJP5o0PjHBOAk2gTPJML_IGCwBMMUwP748OjAFMAkwATANMIMwDTC-rgAOMA8wP748OjAJMAU
+wCTEFP3K-gCQ4Nck8ATCJMIEwiTgBN4k8ATCJMIEwiTgBNQk-mjQ_McE8CTCBMIkwgTPJML_IGCw
+BMMUwP748OjAFMAkwATANMIMwDTC-rgAOMA8wP748OjAJMAUwCTDFP3M-gCQ4NYk8ATCJMIEwiTg
+BN4k8ATCJMIEwiTgBNQk-mjQ_McE8CTCBMIkwgTPJML_IGCwBMUUwiTA-vjw6MA0xhzA-rgAOML_
+_PDowCTAFMAkwhT9zv4AkODVJPAEwiTCBMIk4ATeJPAEwiTCBMIk4ATUJP5o0PjHBPAkwgTCJMIE
+zyTC-iBgsATFFMIkwP748OjANMYcwP64ADjC-vjw6MAkwBTAJMIUwwTAFMEEFNEEFNwEwBTN-gCQ
+4NUk8ATCJMIEwiTgBN4k8ATCJMIEwiTgBNQk-mjQ_McE8CTCBMIkwgTPJML_IGCwBMUUwCTC-vjw
+6MA0whzANMAMwP64ADjANMD__PDowCTAFMAkwhTCBBTABBTABBTRBBTbBBTABBTM-gCQ4NUk4ATK
+JMIEyiTgBN4k4ATKJMIEyiTgBNQk-mjQ_McE4CTKBMIkygTPJML_IGCwBMUUwCTC-vjw6MA0whzA
+NMAMwP64ADjANMD__PDowCTAFMAkwhTCBBTCBMIUBBQEwBTABMAUwAQUwQQUBMEUwQTAFMAEFATA
+FAQUBMAUBBTABBTEBBTCBBQEwBTABMEUwv4AkODVJOAEyiTCBMok4ATeJOAEyiTCBMok4ATUJP5o
+0PjHBOAkygTCJMoEzyTC-iBgsATDFMD__PDowBTABMA0wBzANMAMwP64ADjCNML__PDowCTAFMAk
+whTDBMAUwQQUwQTAFMQEFAQUwQQUBBTABBQEFMAEFATAFMEEwBTBBBTABBTFBMAUwATAFMEEFMX_
+AJDg1STgBMokwgTKJOAE3iTgBMokwgTKJOAE1CT_aND4xwTgJMoEwiTKBM8kwv4gYLAEwxTA-vjw
+6MAUwATANMAcwDTADMD_uAA4wjTC-vjw6MAkwBTAJMIUxQQUwAQUwQQUwwTBFAQUBBQEFAQUwAQU
+BMIUBBTCBBTCBBTABBTHBBQEFMIEFMX_AJDg1STgBMokwgTKJOAE3iTgBMokwgTKJOAE1CT_aND4
+xwTgJMoEwiTKBM8kwv4gYLAExRTC-vjw6MA0wAzA-rgAOMA0xP748OjCJMIUwCTCFMIEFMAEFMAE
+FMEEFMIEFMAEFAQUBBQEFAQUwAQUBBTCBBTCBBTDBMEUxAQUwAQUBBTCBBTF-gCQ4NUk4ATCJMIE
+wiTwBN4k4ATCJMIEwiTwBNQk-mjQ_McE4CTCBMIkwgTfJML_IGCwBMUUwv748OjANMAMwP64ADjA
+NMT__PDowiTCFMAkwhTDBMAUwgTAFAQUwwTBFMAEFAQUwATBFMEEwRQEFMIEFMUEFMUEwBTABBTD
+BMEUwv4AkODVJOAEwiTCBMIk8ATeJOAEwiTCBMIk8ATUJP5o0PjHBOAkwgTCJMIE3yTC-iBgsATF
+FMAkwP748OjANMQExCTGFMAkwhTxBMAU1-4AkODVJOAEwiTCBMIk8ATeJOAEwiTCBMIk8ATUJP5o
+0PjHBOAkwgTCJMIE3yTC-iBgsATFFMAkwP748OjANMQExCTGFMAkwxT9zP4AkODWJOAEwiTCBMIk
+8ATeJOAEwiTCBMIk8ATUJP5o0PjHBOAkwgTCJMIE3yTC-iBgsATDFMD__PDowBTAJMAExCTMFMAk
+xBT9yv4AkODXJOAE2iTgBN4k4ATaJOAE1CT_aND4xwTgJNoEzyTC-iBgsATDFMD__PDowBTAJMAE
+xCTMFMAkyf4AkODaJOAE3iTgBNok4ATeJOAE2iTgBNQk-mjQ_McE4CTaBM8kwv4gYLAExRTCJNIU
+wiTJBNok4ATeJOAE2iTgBN4k4ATaJOAE1CT_aND4xwTgJNoEzyTC-iBgsATFFMIk0hTCJMkE2iTg
+BN4k4ATaJOAE3iTgBNok4ATUJP5o0PjHBOAk2gTPJML_IGCwBMUU1v748OjAFMAkzf4AkODWJOAE
+3iTkBNYk4ATeJOQE1iTgBNQk-mjQ_McE5CTWBM8kwv4gYLAExRTW-vjw6MAUwCTN-gCQ4NYk4ATe
+JOQE1iTgBN4k5ATWJOAE1CT_aND4xwTkJNYEzyTC-iBgsATHFMD__PDo0hTAJM-_AJDg1iTgBN4k
+5ATWJOAE3iTkBNYk4ATUJP5o0PjHBOQk1gTPJML_IGCwBMcUwP748OjSFMAkz-4AkODWJOAE3iTk
+BNYk4ATeJOQE1iTgBNQk-mjQ_McE5CTWBM8kwv4gYLAEyRTSJP3NBN4k-eAE3iT94ATUJP5o0PjH
+BP3PJML_IGCwBMkU0iT9zQTeJP3gBN4k-eAE1CT_aND4xwT90xT_IGCwygTeJN4E3iTeBN4k3gTe
+JN4E3iTeBN4k1BQEx-5o0PjeBN4kzQTCFP4gYLDKBN4k3gTeJN4E3iTeBN4k3gTeJN4E3iTUFATH
+-mjQ_N4E3iTNBMIU-iBgsMoE3iTeBN4k3gTeJN4E3iTeBN4k3gTeJNQUBMf_aND43gTeJM0EwhT_
+IGCwygTeJN4E3iTeBN4k3gTeJN4E3iTeBN4k1BQEx-5o0PjeBN4kzQTCFP4gYLDKBN4k3gTeJN4E
+3iTeBN4k3gTeJN4E3iTUFATH-mjQ_N4E3iTNBMIU-iBgsMoE3iTeBN4k3gTeJN4E3iTeBN4k3gTe
+JNQUBMf_aND43gTeJM0EwhT_IGCwygTeJN4E3iTeBN4k3gTeJN4E3iTeBN4k1BQEx-5o0PjeBN4k
+zQTCFP4gYLDKBN4k3gTeJN4E3iTeBN4k3gTeJN4E3iTUFATH-mjQ_N4E3iTNBMIU-iBgsMoE3iTe
+BN4k3gTeJN4E3iTeBN4k3gTeJNQUBMf_aND43gTeJM0EwhT_IGCwygTeJN4E3iTeBN4k3gTeJN4E
+3iTeBN4k1BQEx-5o0PjeBN4kzQTCFP4gYLDKBN4k3gTeJN4E3iTeBN4k3gTeJN4E3iTUFATH-mjQ
+_N4E3iTNBMIU-iBgsMoE3iTeBN4k3gTeJN4E3iTeBN4k3gTeJNQUBMf_aND43gTeJM0EwhT_IGCw
+ygTeJN4E3iTeBN4k3gTeJN4E3iTeBN4k1BQEx-5o0PjeBMYUBNUkzQTCFP4gYLDKBN4k3gTeJN4E
+3iTeBN4k3gTeJN4E3iTUFATH-mjQ_N4ExRT__PDoFP4AkODUJM0EwhT_IGCwygTeJN4E3iTeBN4k
+3gTeJN4E3iTeBN4k1BQEx-5o0PjeBMUU-vjw6MAU-gCQ4NMkzQTCFP4gYLDKBN4k3gTeJN4E3iTe
+BN4k3gTeJN4E3iTUFATH-mjQ_N4ExRT__PDowRT_AJDg0iTNBMIU-iBgsMoE3iTeBN4k3gTeJN4E
+3iTeBN4k3gTeJNQUBMf_aND43gTFFP748OjCFP4AkODRJM0EwhT_IGCwygTeJN4E3iTeBN4k3gTe
+JN4E3iTeBN4k1BQEx-5o0PjeBMUU-vjw6MAUwP4AkODSJM0EwhT_IGCwygTeJN4E3iTeBN4k3gTe
+JN4E3iTeBN4k1BQEx-5o0PjeBMYUwP748OgU-gCQ4NIkzQTCFP4gYLDKBN4k3gTeJN4E3iTeBN4k
+3gTeJN4E3iTUFATH-mjQ_N4E3iTNBMIU-iBgsMoE3iTeBN4k3gTeJN4E3iTeBN4k3gTeJNQUBMf_
+aND43gTeJM0EwhT_IGCwygTeJN4E3iTeBN4k3gTeJN4E3iTeBN4k1BQEx-5o0PjeBN4kzQTCFP4g
+YLDKBN4k3gTeJN4E3iTeBN4k3gTeJN4E3iTUFATH-mjQ_N4E3iTNBMIU-iBgsMoE3iTeBN4k3gTe
+JN4E3iTeBN4k3gTeJNQUBMf_aND43gTeJM0EwhT_IGCwygTeJN4E3iTeBN4k3gTeJN4E3iTeBN4k
+1BQEx-5o0PjeBN4kzQTCFP4gYLDKBN4k3gTeJN4E3iTeBN4k3gTeJN4E3iTUFATH-mjQ_N4E3iTN
+BMIU-iBgsMoE3iTeBN4k3gTeJN4E3iTeBN4k3gTeJNQUBMf_aND43gTeJM0EwhT_IGCwygTeJN4E
+3iTeBN4k3gTeJN4E3iTeBN4k1BQEx-5o0PjeBN4kzQTCFP4gYLDKBN4k3gTeJN4E3iTeBN4k3gTe
+JN4E3iTUFATH-mjQ_N4E3iTNBMIU-iBgsMoE3iTeBN4k3gTeJN4E3iTeBN4k3gTeJNQUBMf_aND4
+3gTeJM0EwhT_IGCwygTeJN4E3iTeBN4k3gTeJN4E3iTeBN4k1BQEx-5o0PjeBN4kzQTCFP4gYLDK
+BN4k3gTeJN4E3iTeBN4k3gTeJN4E3iTUFATH-mjQ_N4E3iTNBMIU-iBgsOoE3iT94ATeJP3gBN4k
+9BQE5-5o0PjeBNEU-iBgsOoE3iT94ATeJP3gBN4k9BQE5-5o0PjeBM0kwv4gYLAExCTkBN4k4ATW
+JOQE3iTgBNYk5ATeJOAE0iT_aND4wQTkJN4EzSTC-iBgsATEJOQE3iTgBNYk5ATeJOAE1iTkBN4k
+4ATSJP5o0PjBBOQk3gTNJML_IGCwBMQk5ATeJOAE1iTkBN4k4ATWJOQE3iTgBNIk-mjQ_MEE5CTe
+BM0kwv4gYLAExCTkBN4k4ATWJOQE3iTgBNYk5ATeJOAE0iT_aND4wQTkJN4EzSTC-iBgsATIJOAE
+3iTgBNok4ATeJOAE2iTgBN4k4ATSJP5o0PjFBOAk3gTNJML_IGCwBMgk4ATeJOAE2iTgBN4k4ATa
+JOAE3iTgBNIk-mjQ_MUE4CTeBM0kwv4gYLAEyCTgBN4k4ATaJOAE3iTgBNok4ATeJOAE0iT_aND4
+xQTgJN4EzSTC-iBgsATIJOAE3iTgBNok4ATeJOAE2iTgBN4k4ATSJP5o0PjFBOAk3gTQJP4gYLAE
+wCTCBMIk4ATeJPAEwiTCBMIk4ATeJPAEwiTCBMIk4ATeJPAEwhQEwf5o0PjCBOAk3gTQJP4gYLAE
+wCTCBMIk4ATeJPAEwiTCBMIk4ATeJPAEwiTCBMIk4ATeJPAEwhQEwf5o0PjCBOAk3gTQJP4gYLAE
+wCTCBMIk4ATeJPAEwiTCBMIk4ATeJPAEwiTCBMIk4ATeJPAEwhQEwf5o0PjCBOAk3gTQJP4gYLAE
+wCTCBMIk4ATeJPAEwiTCBMIk4ATeJPAEwiTCBMIk4ATeJPAEwhQEwf5o0PjCBOAk3gTQJMD_IGCw
+BMck4ATeJOAEyiTCBMok4ATeJOAEyiTCBMok4ATeJOAEyiTCBMEk-mjQ_MYE4CTeBNAkwf4gYLDH
+FOAk3hTgJMoUwiTKFOAk3hTgJMoUwiTKFOAk3hTgJMoUwiTB-mjQ_McE4CTeBNAkygTgJN4E4CTK
+BMIkygTgJN4E4CTKBMIkygTgJN4E4CTKBMIkygTgJN4E0CTKBOAk3gTgJMoEwiTKBOAk3gTgJMoE
+wiTKBOAk3gTgJMoEwiTKBOAk3gT9wCTeBOAkwgTCJMIE8CTeBOAkwgTCJMIE8CTeBOAkwgTCJMIE
+8CTeBP3AJN4E4CTCBMIkwgTwJN4E4CTCBMIkwgTwJN4E4CTCBMIkwgTwJN4E-cAk3gTgJMIEwiTC
+BPAk3gTgJMIEwiTCBPAk3gTgJMIEwiTCBPAk3gT9wCTeBOAkwgTCJMIE8CTeBOAkwgTCJMIE8CTe
+BOAkwgTCJMIE8CTeBM0kzQTgJN4E4CTaBOAk3gTgJNoE4CTeBOAk2gTgJN4EzSTNBOAk3gTgJNoE
+4CTeBOAk2gTgJN4E4CTaBOAk3gTNJM0E4CTeBOAk2gTgJN4E4CTaBOAk3gTgJNoE4CTeBM0kzQTg
+JN4E4CTaBOAk3gTgJNoE4CTeBOAk2gTgJN4EzSTNBOAk3gTkJNYE4CTeBOQk1gTgJN4E5CTWBOAk
+3gTNJM0E4CTeBOQk1gTgJN4E5CTWBOAk3gTkJNYE4CTeBM0kzQTgJN4E5CTWBOAk3gTkJNYE4CTe
+BOQk1gTgJN4EzQAAAAAAAAAB
+:: map/.info.pod
+--[[pod,created="2025-11-13 21:07:43",modified="2025-12-14 19:08:36"]]
+:: map/0.map
+b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTAxLTE3IDEwOjM1OjQ4Iixtb2RpZmllZD0iMjAyNS0x
+Mi0wMyAyMToyNzowNiIscmV2aXNpb249Ml1dbHo0AEwAAABQAAAA8Rx7e2JtcD1weHUATIAgIAD-
+AAD---8DLGhpZGRlbj1mYWxzZSxwYW5feD0wCADSeT0wLHRpbGVfaD0xNgoAEHcKAIB6b29tPTF9
+fQ==
+:: pal/.info.pod
+--[[pod,created="2025-12-08 22:59:28",modified="2025-12-14 19:08:36"]]
+:: pal/black.pal
+b64$LS1bW3BvZCxiZ19jb2xvcj0wLGJsYWNrZXN0X2NvbG9yPTAsY3JlYXRlZD0iMjAyNS0xMi0w
+OSAwMDoyMToxOSIsaGlkZGVuPXtbMF09ZmFsc2UsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVl
+LHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0
+cnVlLHRydWUsdHJ1ZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxm
+YWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxz
+ZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxm
+YWxzZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWV9LGhpZGRlbl90b2dnbGVzPXtbMF09dHJ1ZSx0
+cnVlLGZhbHNlLHRydWV9LGh1ZV9vZmZzZXQ9MCxpY29uPXVzZXJkYXRhKCJ1OCIsMTYsMTYsIjAw
+MDEwMTAxMDEwMTAxMDEwMTAxMDEwMDAwMDAwMDAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNjAxMDAw
+MDAwMDAwMDAxMDcwNzA3MDcwNzA3MDcwNzA2MDYwMTAwMDAwMDAwMDEwNzA3MDcwNzA3MDcwNzA3
+MDYwNjA2MDEwMDAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNjA2MDYwNjAxMDAwMDAxMDcwNzA3MDcw
+NzA3MDcwNzA3MDcwNzA3MDEwMDAwMDEwNzA3MDcwNzA3MDcwNzA3MDcwNzA3MDcwMTAwMDAwMTA3
+MDcwNjA2MDEwMTBkMGQwMTAxMDcwNzAxMDAwMDAxMDcwNzA2MDYwMTAxMGQwZDAxMDEwNzA3MDEw
+MDAwMDEwNzA3MDEwMTA3MDcwNjA2MGQwZDA3MDcwMTAwMDAwMTA3MDcwMTAxMDcwNzA2MDYwZDBk
+MDcwNzAxMDAwMDAxMDcwNzBkMGQwMTAxMGQwZDA2MDYwNzA3MDEwMDAwMDEwNzA3MGQwZDAxMDEw
+ZDBkMDYwNjA3MDcwMTAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNzA3MDcwNzAxMDAwMDAxMDcwNzA3
+MDcwNzA3MDcwNzA3MDcwNzA3MDEwMDAwMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAwIiks
+bG9ja2VkPXtbMF09dHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUs
+dHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVl
+LGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZh
+bHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNl
+LGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWV9LG1vZGlmaWVkPSIyMDI1LTEyLTEwIDE5OjQ2OjI0Iixva3BhbF92
+ZXJzaW9uPSIxLjIuMyIscGlja2Vyc19tb2RlPSJsaW5lYXJfaHVlIixyZXZpc2lvbj00MSx0ZXN0
+X2N1YmVfY29sb3JzPXtbMF09ezE1LDMxLDR9LHszMSw0LDIwfSx7NCwyMCwyMX0sezEwLDksMjV9
+LHs5LDI1LDI0fSx7OCwyNCwyfSx7MjYsMTEsMjd9LHsxMSwyNywzfSx7MjcsMywxOX0sezI4LDE3
+LDE5fSx7MjgsMTIsMTZ9LHsxMiwxNiwxfSx7NiwyOSwxM30sezI5LDEzLDE4fSx7MTMsMTgsMX0s
+ezcsMjMsMTR9LHsyMywxNCwxM30sezE0LDMwLDE4fSx7Nyw2LDIyfSx7NiwyMiw1fSx7MjIsNSwy
+MX0sezEsMSwxfSx7MSwxLDF9LHsxLDEsMX19LHRlc3RfbW9kZT0iY3ViZXMiLHRlc3RfcmFtcF9j
+b2xvcnM9dXNlcmRhdGEoInU4IiwxMCwyNywiMDAxODA4MTkwOTBhMWEwYjFiMDAwNjAwMDAwMDAw
+MDAwMDAwMDMwMDE2MDAwMDAwMDAwMDAwMDAxMzAwMDUwMDAwMDAwMDAwMDAwMDAxMDAwZDAwMDAw
+MDAwMDAwMDAwMTAwMDFkMDAwMDAwMDAwMDAwMDAxMTAwMTcwMDAwMDAwMDAwMDAwMDBjMDAwZTAw
+MDAwMDAwMDAwMDAwMWMwMDFlMTIwMjE1MTQwNDFmMGYwNzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDE0MDQxZjBmMDgxODAyMDAwMDE1MDUxNjA2MDcxNzBlMWUwMDAwMDExMDExMGMxYzFkMGQxMjAw
+MDAxMzAzMWIwYjFhMGEwOTE5MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIiks
+d2hpdGVzdF9jb2xvcj03XV1sejQAOgEAABUCAAD1BXVzZXJkYXRhKCJpMzIiLDY0LCIwAQDAMWQy
+YjUzMDA3ZTI1CADwFzAwODc1MTAwYWI1MjM2MDA1ZjU3NGYwMGMyYzNjNzAwZmZmMWU4CABAMDA0
+ZAgAEWE2AGBmZmVjMjcKACBlNDgAQDI5YWQkAGA4Mzc2OWMgADE3N2E4ALBjY2FhMDAyNDYzYi8A
+8B4wYTVhMTAwNjU0Njg4MDAxMjUzNTkwMDcyMzAyZDAwNDUyZDMyMDBhMjg4NzlAAPANYWNjNTAw
+YjkwMDNlMDBlMjZiMDIwMDk1ZjA0MlAAIGIywACgNjRkZmY2MDBiZIkAAJYAQDBkYWJAAF05MDY3
+MAEAsTFmMjQzYTAwMzY0QAD-CDc4N2I3MzAwYjZiMmFlMDBkZWRjZGEwAQCOBLABDwgACFA3NGYi
+KQ==
+:: pal/blue.pal
+b64$LS1bW3BvZCxiZ19jb2xvcj0wLGJsYWNrZXN0X2NvbG9yPTAsY3JlYXRlZD0iMjAyNS0xMi0w
+OCAyMzo0NTowMCIsaGlkZGVuPXtbMF09ZmFsc2UsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVl
+LHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0
+cnVlLHRydWUsdHJ1ZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxm
+YWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxz
+ZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxm
+YWxzZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWV9LGhpZGRlbl90b2dnbGVzPXtbMF09dHJ1ZSx0
+cnVlLGZhbHNlLHRydWV9LGh1ZV9vZmZzZXQ9MCxpY29uPXVzZXJkYXRhKCJ1OCIsMTYsMTYsIjAw
+MDEwMTAxMDEwMTAxMDEwMTAxMDEwMDAwMDAwMDAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNjAxMDAw
+MDAwMDAwMDAxMDcwNzA3MDcwNzA3MDcwNzA2MDYwMTAwMDAwMDAwMDEwNzA3MDcwNzA3MDcwNzA3
+MDYwNjA2MDEwMDAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNjA2MDYwNjAxMDAwMDAxMDcwNzA3MDcw
+NzA3MDcwNzA3MDcwNzA3MDEwMDAwMDEwNzA3MDcwNzA3MDcwNzA3MDcwNzA3MDcwMTAwMDAwMTA3
+MDcwNjA2MDEwMTBkMGQwMTAxMDcwNzAxMDAwMDAxMDcwNzA2MDYwMTAxMGQwZDAxMDEwNzA3MDEw
+MDAwMDEwNzA3MDEwMTA3MDcwNjA2MGQwZDA3MDcwMTAwMDAwMTA3MDcwMTAxMDcwNzA2MDYwZDBk
+MDcwNzAxMDAwMDAxMDcwNzBkMGQwMTAxMGQwZDA2MDYwNzA3MDEwMDAwMDEwNzA3MGQwZDAxMDEw
+ZDBkMDYwNjA3MDcwMTAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNzA3MDcwNzAxMDAwMDAxMDcwNzA3
+MDcwNzA3MDcwNzA3MDcwNzA3MDEwMDAwMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAwIiks
+bG9ja2VkPXtbMF09dHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUs
+dHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVl
+LGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZh
+bHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNl
+LGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWV9LG1vZGlmaWVkPSIyMDI1LTEyLTExIDE4OjA0OjE0Iixva3BhbF92
+ZXJzaW9uPSIxLjIuMyIscGlja2Vyc19tb2RlPSJsaW5lYXJfaHVlIixyZXZpc2lvbj0yMSx0ZXN0
+X2N1YmVfY29sb3JzPXtbMF09ezE1LDMxLDR9LHszMSw0LDIwfSx7NCwyMCwyMX0sezEwLDksMjV9
+LHs5LDI1LDI0fSx7OCwyNCwyfSx7MjYsMTEsMjd9LHsxMSwyNywzfSx7MjcsMywxOX0sezI4LDE3
+LDE5fSx7MjgsMTIsMTZ9LHsxMiwxNiwxfSx7NiwyOSwxM30sezI5LDEzLDE4fSx7MTMsMTgsMX0s
+ezcsMjMsMTR9LHsyMywxNCwxM30sezE0LDMwLDE4fSx7Nyw2LDIyfSx7NiwyMiw1fSx7MjIsNSwy
+MX0sezEsMSwxfSx7MSwxLDF9LHsxLDEsMX19LHRlc3RfbW9kZT0iY3ViZXMiLHRlc3RfcmFtcF9j
+b2xvcnM9dXNlcmRhdGEoInU4IiwxMCwyNywiMDAxODA4MTkwOTBhMWEwYjFiMDAwNjAwMDAwMDAw
+MDAwMDAwMDMwMDE2MDAwMDAwMDAwMDAwMDAxMzAwMDUwMDAwMDAwMDAwMDAwMDAxMDAwZDAwMDAw
+MDAwMDAwMDAwMTAwMDFkMDAwMDAwMDAwMDAwMDAxMTAwMTcwMDAwMDAwMDAwMDAwMDBjMDAwZTAw
+MDAwMDAwMDAwMDAwMWMwMDFlMTIwMjE1MTQwNDFmMGYwNzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDE0MDQxZjBmMDgxODAyMDAwMDE1MDUxNjA2MDcxNzBlMWUwMDAwMDExMDExMGMxYzFkMGQxMjAw
+MDAxMzAzMWIwYjFhMGEwOTE5MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIiks
+d2hpdGVzdF9jb2xvcj03XV1sejQALwEAABUCAAD1BXVzZXJkYXRhKCJpMzIiLDY0LCIwAQDAMWQy
+YjUzMDA3ZTI1CADwFzAwODc1MTAwYWI1MjM2MDA1ZjU3NGYwMGMyYzNjNzAwZmZmMWU4CABAMDA0
+ZAgAEWE2AGBmZmVjMjcKACBlNDgAQDI5YWQkAGA4Mzc2OWMgADE3N2E4ALBjY2FhMDAyNDYzYi8A
+8B4wYTVhMTAwNjU0Njg4MDAxMjUzNTkwMDcyMzAyZDAwNDUyZDMyMDBhMjg4NzlAAPANYWNjNTAw
+YjkwMDNlMDBlMjZiMDIwMDk1ZjA0MlAAIGIywACgNjRkZmY2MDBiZIkAAJYAQDBkYWJAAF05MDY3
+MAABBpAA9gU5NmUyMDA2Y2Q2ZjgwMDk5ZjRmOfgADwEAjQSwAQ8IAAhQNzRmIik=
+:: pal/gray.pal
+b64$LS1bW3BvZCxiZ19jb2xvcj0wLGJsYWNrZXN0X2NvbG9yPTAsY3JlYXRlZD0iMjAyNS0xMi0w
+OSAwMDowNzo0MyIsaGlkZGVuPXtbMF09ZmFsc2UsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVl
+LHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0
+cnVlLHRydWUsdHJ1ZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxm
+YWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxz
+ZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxm
+YWxzZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWV9LGhpZGRlbl90b2dnbGVzPXtbMF09dHJ1ZSx0
+cnVlLGZhbHNlLHRydWV9LGh1ZV9vZmZzZXQ9MCxpY29uPXVzZXJkYXRhKCJ1OCIsMTYsMTYsIjAw
+MDEwMTAxMDEwMTAxMDEwMTAxMDEwMDAwMDAwMDAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNjAxMDAw
+MDAwMDAwMDAxMDcwNzA3MDcwNzA3MDcwNzA2MDYwMTAwMDAwMDAwMDEwNzA3MDcwNzA3MDcwNzA3
+MDYwNjA2MDEwMDAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNjA2MDYwNjAxMDAwMDAxMDcwNzA3MDcw
+NzA3MDcwNzA3MDcwNzA3MDEwMDAwMDEwNzA3MDcwNzA3MDcwNzA3MDcwNzA3MDcwMTAwMDAwMTA3
+MDcwNjA2MDEwMTBkMGQwMTAxMDcwNzAxMDAwMDAxMDcwNzA2MDYwMTAxMGQwZDAxMDEwNzA3MDEw
+MDAwMDEwNzA3MDEwMTA3MDcwNjA2MGQwZDA3MDcwMTAwMDAwMTA3MDcwMTAxMDcwNzA2MDYwZDBk
+MDcwNzAxMDAwMDAxMDcwNzBkMGQwMTAxMGQwZDA2MDYwNzA3MDEwMDAwMDEwNzA3MGQwZDAxMDEw
+ZDBkMDYwNjA3MDcwMTAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNzA3MDcwNzAxMDAwMDAxMDcwNzA3
+MDcwNzA3MDcwNzA3MDcwNzA3MDEwMDAwMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAwIiks
+bG9ja2VkPXtbMF09dHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUs
+dHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVl
+LGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZh
+bHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNl
+LGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWV9LG1vZGlmaWVkPSIyMDI1LTEyLTExIDE3OjI5OjQ2Iixva3BhbF92
+ZXJzaW9uPSIxLjIuMyIscGlja2Vyc19tb2RlPSJsaW5lYXJfaHVlIixyZXZpc2lvbj00Nix0ZXN0
+X2N1YmVfY29sb3JzPXtbMF09ezE1LDMxLDR9LHszMSw0LDIwfSx7NCwyMCwyMX0sezEwLDksMjV9
+LHs5LDI1LDI0fSx7OCwyNCwyfSx7MjYsMTEsMjd9LHsxMSwyNywzfSx7MjcsMywxOX0sezI4LDE3
+LDE5fSx7MjgsMTIsMTZ9LHsxMiwxNiwxfSx7NiwyOSwxM30sezI5LDEzLDE4fSx7MTMsMTgsMX0s
+ezcsMjMsMTR9LHsyMywxNCwxM30sezE0LDMwLDE4fSx7Nyw2LDIyfSx7NiwyMiw1fSx7MjIsNSwy
+MX0sezEsMSwxfSx7MSwxLDF9LHsxLDEsMX19LHRlc3RfbW9kZT0iY3ViZXMiLHRlc3RfcmFtcF9j
+b2xvcnM9dXNlcmRhdGEoInU4IiwxMCwyNywiMDAxODA4MTkwOTBhMWEwYjFiMDAwNjAwMDAwMDAw
+MDAwMDAwMDMwMDE2MDAwMDAwMDAwMDAwMDAxMzAwMDUwMDAwMDAwMDAwMDAwMDAxMDAwZDAwMDAw
+MDAwMDAwMDAwMTAwMDFkMDAwMDAwMDAwMDAwMDAxMTAwMTcwMDAwMDAwMDAwMDAwMDBjMDAwZTAw
+MDAwMDAwMDAwMDAwMWMwMDFlMTIwMjE1MTQwNDFmMGYwNzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDE0MDQxZjBmMDgxODAyMDAwMDE1MDUxNjA2MDcxNzBlMWUwMDAwMDExMDExMGMxYzFkMGQxMjAw
+MDAxMzAzMWIwYjFhMGEwOTE5MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIiks
+d2hpdGVzdF9jb2xvcj03XV1sejQAMgEAABUCAAD1BXVzZXJkYXRhKCJpMzIiLDY0LCIwAQDAMWQy
+YjUzMDA3ZTI1CADwFzAwODc1MTAwYWI1MjM2MDA1ZjU3NGYwMGMyYzNjNzAwZmZmMWU4CABAMDA0
+ZAgAEWE2AGBmZmVjMjcKACBlNDgAQDI5YWQkAGA4Mzc2OWMgADE3N2E4ALBjY2FhMDAyNDYzYi8A
+8B4wYTVhMTAwNjU0Njg4MDAxMjUzNTkwMDcyMzAyZDAwNDUyZDMyMDBhMjg4NzlAAPANYWNjNTAw
+YjkwMDNlMDBlMjZiMDIwMDk1ZjA0MlAAIGIywACgNjRkZmY2MDBiZIkAAJYAQDBkYWJAAF05MDY3
+MAABUDgxNzk5_ADQN2E5YjQwMGU1ZTRkYTAAAAEABggADwEAjQSwAQ8IAAhQNzRmIik=
+:: pal/green.pal
+b64$LS1bW3BvZCxiZ19jb2xvcj0wLGJsYWNrZXN0X2NvbG9yPTAsY3JlYXRlZD0iMjAyNS0xMi0w
+OCAyMzo0Nzo1MCIsaGlkZGVuPXtbMF09ZmFsc2UsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVl
+LHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0
+cnVlLHRydWUsdHJ1ZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxm
+YWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxz
+ZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxm
+YWxzZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWV9LGhpZGRlbl90b2dnbGVzPXtbMF09dHJ1ZSx0
+cnVlLGZhbHNlLHRydWV9LGh1ZV9vZmZzZXQ9MCxpY29uPXVzZXJkYXRhKCJ1OCIsMTYsMTYsIjAw
+MDEwMTAxMDEwMTAxMDEwMTAxMDEwMDAwMDAwMDAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNjAxMDAw
+MDAwMDAwMDAxMDcwNzA3MDcwNzA3MDcwNzA2MDYwMTAwMDAwMDAwMDEwNzA3MDcwNzA3MDcwNzA3
+MDYwNjA2MDEwMDAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNjA2MDYwNjAxMDAwMDAxMDcwNzA3MDcw
+NzA3MDcwNzA3MDcwNzA3MDEwMDAwMDEwNzA3MDcwNzA3MDcwNzA3MDcwNzA3MDcwMTAwMDAwMTA3
+MDcwNjA2MDEwMTBkMGQwMTAxMDcwNzAxMDAwMDAxMDcwNzA2MDYwMTAxMGQwZDAxMDEwNzA3MDEw
+MDAwMDEwNzA3MDEwMTA3MDcwNjA2MGQwZDA3MDcwMTAwMDAwMTA3MDcwMTAxMDcwNzA2MDYwZDBk
+MDcwNzAxMDAwMDAxMDcwNzBkMGQwMTAxMGQwZDA2MDYwNzA3MDEwMDAwMDEwNzA3MGQwZDAxMDEw
+ZDBkMDYwNjA3MDcwMTAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNzA3MDcwNzAxMDAwMDAxMDcwNzA3
+MDcwNzA3MDcwNzA3MDcwNzA3MDEwMDAwMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAwIiks
+bG9ja2VkPXtbMF09dHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUs
+dHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVl
+LGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZh
+bHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNl
+LGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWV9LG1vZGlmaWVkPSIyMDI1LTEyLTEwIDIwOjM4OjI0Iixva3BhbF92
+ZXJzaW9uPSIxLjIuMyIscGlja2Vyc19tb2RlPSJsaW5lYXJfaHVlIixyZXZpc2lvbj0xNix0ZXN0
+X2N1YmVfY29sb3JzPXtbMF09ezE1LDMxLDR9LHszMSw0LDIwfSx7NCwyMCwyMX0sezEwLDksMjV9
+LHs5LDI1LDI0fSx7OCwyNCwyfSx7MjYsMTEsMjd9LHsxMSwyNywzfSx7MjcsMywxOX0sezI4LDE3
+LDE5fSx7MjgsMTIsMTZ9LHsxMiwxNiwxfSx7NiwyOSwxM30sezI5LDEzLDE4fSx7MTMsMTgsMX0s
+ezcsMjMsMTR9LHsyMywxNCwxM30sezE0LDMwLDE4fSx7Nyw2LDIyfSx7NiwyMiw1fSx7MjIsNSwy
+MX0sezEsMSwxfSx7MSwxLDF9LHsxLDEsMX19LHRlc3RfbW9kZT0iY3ViZXMiLHRlc3RfcmFtcF9j
+b2xvcnM9dXNlcmRhdGEoInU4IiwxMCwyNywiMDAxODA4MTkwOTBhMWEwYjFiMDAwNjAwMDAwMDAw
+MDAwMDAwMDMwMDE2MDAwMDAwMDAwMDAwMDAxMzAwMDUwMDAwMDAwMDAwMDAwMDAxMDAwZDAwMDAw
+MDAwMDAwMDAwMTAwMDFkMDAwMDAwMDAwMDAwMDAxMTAwMTcwMDAwMDAwMDAwMDAwMDBjMDAwZTAw
+MDAwMDAwMDAwMDAwMWMwMDFlMTIwMjE1MTQwNDFmMGYwNzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDE0MDQxZjBmMDgxODAyMDAwMDE1MDUxNjA2MDcxNzBlMWUwMDAwMDExMDExMGMxYzFkMGQxMjAw
+MDAxMzAzMWIwYjFhMGEwOTE5MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIiks
+d2hpdGVzdF9jb2xvcj03XV1sejQAOAEAABUCAAD1BXVzZXJkYXRhKCJpMzIiLDY0LCIwAQDAMWQy
+YjUzMDA3ZTI1CADwFzAwODc1MTAwYWI1MjM2MDA1ZjU3NGYwMGMyYzNjNzAwZmZmMWU4CABAMDA0
+ZAgAEWE2AGBmZmVjMjcKACBlNDgAQDI5YWQkAGA4Mzc2OWMgADE3N2E4ALBjY2FhMDAyNDYzYi8A
+8B4wYTVhMTAwNjU0Njg4MDAxMjUzNTkwMDcyMzAyZDAwNDUyZDMyMDBhMjg4NzlAAPANYWNjNTAw
+YjkwMDNlMDBlMjZiMDIwMDk1ZjA0MlAAIGIywACgNjRkZmY2MDBiZIkAAJYAQDBkYWJAAFU5MDY3
+MAEABHAAAAIB9gs1ZjAwMjViMDU3MDA3Y2RmMzkwMGRhZmE3MfgADwEAjQSwAQ8IAAhQNzRmIik=
+:: pal/orange.pal
+b64$LS1bW3BvZCxiZ19jb2xvcj0wLGJsYWNrZXN0X2NvbG9yPTAsY3JlYXRlZD0iMjAyNS0xMi0w
+OCAyMzo0OTo1NCIsaGlkZGVuPXtbMF09ZmFsc2UsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVl
+LHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0
+cnVlLHRydWUsdHJ1ZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxm
+YWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxz
+ZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxm
+YWxzZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWV9LGhpZGRlbl90b2dnbGVzPXtbMF09dHJ1ZSx0
+cnVlLGZhbHNlLHRydWV9LGh1ZV9vZmZzZXQ9MCxpY29uPXVzZXJkYXRhKCJ1OCIsMTYsMTYsIjAw
+MDEwMTAxMDEwMTAxMDEwMTAxMDEwMDAwMDAwMDAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNjAxMDAw
+MDAwMDAwMDAxMDcwNzA3MDcwNzA3MDcwNzA2MDYwMTAwMDAwMDAwMDEwNzA3MDcwNzA3MDcwNzA3
+MDYwNjA2MDEwMDAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNjA2MDYwNjAxMDAwMDAxMDcwNzA3MDcw
+NzA3MDcwNzA3MDcwNzA3MDEwMDAwMDEwNzA3MDcwNzA3MDcwNzA3MDcwNzA3MDcwMTAwMDAwMTA3
+MDcwNjA2MDEwMTBkMGQwMTAxMDcwNzAxMDAwMDAxMDcwNzA2MDYwMTAxMGQwZDAxMDEwNzA3MDEw
+MDAwMDEwNzA3MDEwMTA3MDcwNjA2MGQwZDA3MDcwMTAwMDAwMTA3MDcwMTAxMDcwNzA2MDYwZDBk
+MDcwNzAxMDAwMDAxMDcwNzBkMGQwMTAxMGQwZDA2MDYwNzA3MDEwMDAwMDEwNzA3MGQwZDAxMDEw
+ZDBkMDYwNjA3MDcwMTAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNzA3MDcwNzAxMDAwMDAxMDcwNzA3
+MDcwNzA3MDcwNzA3MDcwNzA3MDEwMDAwMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAwIiks
+bG9ja2VkPXtbMF09dHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUs
+dHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVl
+LGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZh
+bHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNl
+LGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWV9LG1vZGlmaWVkPSIyMDI1LTEyLTExIDE3OjMxOjQxIixva3BhbF92
+ZXJzaW9uPSIxLjIuMyIscGlja2Vyc19tb2RlPSJsaW5lYXJfaHVlIixyZXZpc2lvbj0zOCx0ZXN0
+X2N1YmVfY29sb3JzPXtbMF09ezE1LDMxLDR9LHszMSw0LDIwfSx7NCwyMCwyMX0sezEwLDksMjV9
+LHs5LDI1LDI0fSx7OCwyNCwyfSx7MjYsMTEsMjd9LHsxMSwyNywzfSx7MjcsMywxOX0sezI4LDE3
+LDE5fSx7MjgsMTIsMTZ9LHsxMiwxNiwxfSx7NiwyOSwxM30sezI5LDEzLDE4fSx7MTMsMTgsMX0s
+ezcsMjMsMTR9LHsyMywxNCwxM30sezE0LDMwLDE4fSx7Nyw2LDIyfSx7NiwyMiw1fSx7MjIsNSwy
+MX0sezEsMSwxfSx7MSwxLDF9LHsxLDEsMX19LHRlc3RfbW9kZT0iY3ViZXMiLHRlc3RfcmFtcF9j
+b2xvcnM9dXNlcmRhdGEoInU4IiwxMCwyNywiMDAxODA4MTkwOTBhMWEwYjFiMDAwNjAwMDAwMDAw
+MDAwMDAwMDMwMDE2MDAwMDAwMDAwMDAwMDAxMzAwMDUwMDAwMDAwMDAwMDAwMDAxMDAwZDAwMDAw
+MDAwMDAwMDAwMTAwMDFkMDAwMDAwMDAwMDAwMDAxMTAwMTcwMDAwMDAwMDAwMDAwMDBjMDAwZTAw
+MDAwMDAwMDAwMDAwMWMwMDFlMTIwMjE1MTQwNDFmMGYwNzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDE0MDQxZjBmMDgxODAyMDAwMDE1MDUxNjA2MDcxNzBlMWUwMDAwMDExMDExMGMxYzFkMGQxMjAw
+MDAxMzAzMWIwYjFhMGEwOTE5MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIiks
+d2hpdGVzdF9jb2xvcj03XV1sejQAOAEAABUCAAD1BXVzZXJkYXRhKCJpMzIiLDY0LCIwAQDAMWQy
+YjUzMDA3ZTI1CADwFzAwODc1MTAwYWI1MjM2MDA1ZjU3NGYwMGMyYzNjNzAwZmZmMWU4CABAMDA0
+ZAgAEWE2AGBmZmVjMjcKACBlNDgAQDI5YWQkAGA4Mzc2OWMgADE3N2E4ALBjY2FhMDAyNDYzYi8A
+8B4wYTVhMTAwNjU0Njg4MDAxMjUzNTkwMDcyMzAyZDAwNDUyZDMyMDBhMjg4NzlAAPANYWNjNTAw
+YjkwMDNlMDBlMjZiMDIwMDk1ZjA0MlAAIGIywACgNjRkZmY2MDBiZIkAAJYAQDBkYWJAAFU5MDY3
+MAEA8AM4NzNiMzcwMGRkNjUxNTAwZjSuAAAoADFkMDi4AChlOfgADwEAjQSwAQ8IAAhQNzRmIik=
+:: pal/pink.pal
+b64$LS1bW3BvZCxiZ19jb2xvcj0wLGJsYWNrZXN0X2NvbG9yPTAsY3JlYXRlZD0iMjAyNS0xMi0w
+OSAwMDowNTo0NiIsaGlkZGVuPXtbMF09ZmFsc2UsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVl
+LHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0
+cnVlLHRydWUsdHJ1ZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxm
+YWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxz
+ZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxm
+YWxzZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWV9LGhpZGRlbl90b2dnbGVzPXtbMF09dHJ1ZSx0
+cnVlLGZhbHNlLHRydWV9LGh1ZV9vZmZzZXQ9MCxpY29uPXVzZXJkYXRhKCJ1OCIsMTYsMTYsIjAw
+MDEwMTAxMDEwMTAxMDEwMTAxMDEwMDAwMDAwMDAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNjAxMDAw
+MDAwMDAwMDAxMDcwNzA3MDcwNzA3MDcwNzA2MDYwMTAwMDAwMDAwMDEwNzA3MDcwNzA3MDcwNzA3
+MDYwNjA2MDEwMDAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNjA2MDYwNjAxMDAwMDAxMDcwNzA3MDcw
+NzA3MDcwNzA3MDcwNzA3MDEwMDAwMDEwNzA3MDcwNzA3MDcwNzA3MDcwNzA3MDcwMTAwMDAwMTA3
+MDcwNjA2MDEwMTBkMGQwMTAxMDcwNzAxMDAwMDAxMDcwNzA2MDYwMTAxMGQwZDAxMDEwNzA3MDEw
+MDAwMDEwNzA3MDEwMTA3MDcwNjA2MGQwZDA3MDcwMTAwMDAwMTA3MDcwMTAxMDcwNzA2MDYwZDBk
+MDcwNzAxMDAwMDAxMDcwNzBkMGQwMTAxMGQwZDA2MDYwNzA3MDEwMDAwMDEwNzA3MGQwZDAxMDEw
+ZDBkMDYwNjA3MDcwMTAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNzA3MDcwNzAxMDAwMDAxMDcwNzA3
+MDcwNzA3MDcwNzA3MDcwNzA3MDEwMDAwMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAwIiks
+bG9ja2VkPXtbMF09dHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUs
+dHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVl
+LGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZh
+bHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNl
+LGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWV9LG1vZGlmaWVkPSIyMDI1LTEyLTExIDE3OjM0OjAzIixva3BhbF92
+ZXJzaW9uPSIxLjIuMyIscGlja2Vyc19tb2RlPSJsaW5lYXJfaHVlIixyZXZpc2lvbj0xMyx0ZXN0
+X2N1YmVfY29sb3JzPXtbMF09ezE1LDMxLDR9LHszMSw0LDIwfSx7NCwyMCwyMX0sezEwLDksMjV9
+LHs5LDI1LDI0fSx7OCwyNCwyfSx7MjYsMTEsMjd9LHsxMSwyNywzfSx7MjcsMywxOX0sezI4LDE3
+LDE5fSx7MjgsMTIsMTZ9LHsxMiwxNiwxfSx7NiwyOSwxM30sezI5LDEzLDE4fSx7MTMsMTgsMX0s
+ezcsMjMsMTR9LHsyMywxNCwxM30sezE0LDMwLDE4fSx7Nyw2LDIyfSx7NiwyMiw1fSx7MjIsNSwy
+MX0sezEsMSwxfSx7MSwxLDF9LHsxLDEsMX19LHRlc3RfbW9kZT0iY3ViZXMiLHRlc3RfcmFtcF9j
+b2xvcnM9dXNlcmRhdGEoInU4IiwxMCwyNywiMDAxODA4MTkwOTBhMWEwYjFiMDAwNjAwMDAwMDAw
+MDAwMDAwMDMwMDE2MDAwMDAwMDAwMDAwMDAxMzAwMDUwMDAwMDAwMDAwMDAwMDAxMDAwZDAwMDAw
+MDAwMDAwMDAwMTAwMDFkMDAwMDAwMDAwMDAwMDAxMTAwMTcwMDAwMDAwMDAwMDAwMDBjMDAwZTAw
+MDAwMDAwMDAwMDAwMWMwMDFlMTIwMjE1MTQwNDFmMGYwNzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDE0MDQxZjBmMDgxODAyMDAwMDE1MDUxNjA2MDcxNzBlMWUwMDAwMDExMDExMGMxYzFkMGQxMjAw
+MDAxMzAzMWIwYjFhMGEwOTE5MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIiks
+d2hpdGVzdF9jb2xvcj03XV1sejQAMAEAABUCAAD1BXVzZXJkYXRhKCJpMzIiLDY0LCIwAQDAMWQy
+YjUzMDA3ZTI1CADwFzAwODc1MTAwYWI1MjM2MDA1ZjU3NGYwMGMyYzNjNzAwZmZmMWU4CABAMDA0
+ZAgAEWE2AGBmZmVjMjcKACBlNDgAQDI5YWQkAGA4Mzc2OWMgADE3N2E4ALBjY2FhMDAyNDYzYi8A
+8B4wYTVhMTAwNjU0Njg4MDAxMjUzNTkwMDcyMzAyZDAwNDUyZDMyMDBhMjg4NzlAAPANYWNjNTAw
+YjkwMDNlMDBlMjZiMDIwMDk1ZjA0MlAAIGIywACgNjRkZmY2MDBiZIkAAJYAQDBkYWJAAFU5MDY3
+MAEABPgAUGQ0MTNhyABWZTQ1YWJoAGZmZmQ0ZDL4AA8BAI0EsAEPCAAIUDc0ZiIp
+:: pal/purple.pal
+b64$LS1bW3BvZCxiZ19jb2xvcj0wLGJsYWNrZXN0X2NvbG9yPTAsY3JlYXRlZD0iMjAyNS0xMi0w
+OCAyMzo0MDo1OCIsaGlkZGVuPXtbMF09ZmFsc2UsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVl
+LHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0
+cnVlLHRydWUsdHJ1ZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxm
+YWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxz
+ZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxm
+YWxzZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWV9LGhpZGRlbl90b2dnbGVzPXtbMF09dHJ1ZSx0
+cnVlLGZhbHNlLHRydWV9LGh1ZV9vZmZzZXQ9MCxpY29uPXVzZXJkYXRhKCJ1OCIsMTYsMTYsIjAw
+MDEwMTAxMDEwMTAxMDEwMTAxMDEwMDAwMDAwMDAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNjAxMDAw
+MDAwMDAwMDAxMDcwNzA3MDcwNzA3MDcwNzA2MDYwMTAwMDAwMDAwMDEwNzA3MDcwNzA3MDcwNzA3
+MDYwNjA2MDEwMDAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNjA2MDYwNjAxMDAwMDAxMDcwNzA3MDcw
+NzA3MDcwNzA3MDcwNzA3MDEwMDAwMDEwNzA3MDcwNzA3MDcwNzA3MDcwNzA3MDcwMTAwMDAwMTA3
+MDcwNjA2MDEwMTBkMGQwMTAxMDcwNzAxMDAwMDAxMDcwNzA2MDYwMTAxMGQwZDAxMDEwNzA3MDEw
+MDAwMDEwNzA3MDEwMTA3MDcwNjA2MGQwZDA3MDcwMTAwMDAwMTA3MDcwMTAxMDcwNzA2MDYwZDBk
+MDcwNzAxMDAwMDAxMDcwNzBkMGQwMTAxMGQwZDA2MDYwNzA3MDEwMDAwMDEwNzA3MGQwZDAxMDEw
+ZDBkMDYwNjA3MDcwMTAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNzA3MDcwNzAxMDAwMDAxMDcwNzA3
+MDcwNzA3MDcwNzA3MDcwNzA3MDEwMDAwMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAwIiks
+bG9ja2VkPXtbMF09dHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUs
+dHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVl
+LGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZh
+bHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNl
+LGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWV9LG1vZGlmaWVkPSIyMDI1LTEyLTExIDE3OjMyOjUyIixva3BhbF92
+ZXJzaW9uPSIxLjIuMyIscGlja2Vyc19tb2RlPSJsaW5lYXJfaHVlIixyZXZpc2lvbj0yMSx0ZXN0
+X2N1YmVfY29sb3JzPXtbMF09ezE1LDMxLDR9LHszMSw0LDIwfSx7NCwyMCwyMX0sezEwLDksMjV9
+LHs5LDI1LDI0fSx7OCwyNCwyfSx7MjYsMTEsMjd9LHsxMSwyNywzfSx7MjcsMywxOX0sezI4LDE3
+LDE5fSx7MjgsMTIsMTZ9LHsxMiwxNiwxfSx7NiwyOSwxM30sezI5LDEzLDE4fSx7MTMsMTgsMX0s
+ezcsMjMsMTR9LHsyMywxNCwxM30sezE0LDMwLDE4fSx7Nyw2LDIyfSx7NiwyMiw1fSx7MjIsNSwy
+MX0sezEsMSwxfSx7MSwxLDF9LHsxLDEsMX19LHRlc3RfbW9kZT0iY3ViZXMiLHRlc3RfcmFtcF9j
+b2xvcnM9dXNlcmRhdGEoInU4IiwxMCwyNywiMDAxODA4MTkwOTBhMWEwYjFiMDAwNjAwMDAwMDAw
+MDAwMDAwMDMwMDE2MDAwMDAwMDAwMDAwMDAxMzAwMDUwMDAwMDAwMDAwMDAwMDAxMDAwZDAwMDAw
+MDAwMDAwMDAwMTAwMDFkMDAwMDAwMDAwMDAwMDAxMTAwMTcwMDAwMDAwMDAwMDAwMDBjMDAwZTAw
+MDAwMDAwMDAwMDAwMWMwMDFlMTIwMjE1MTQwNDFmMGYwNzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDE0MDQxZjBmMDgxODAyMDAwMDE1MDUxNjA2MDcxNzBlMWUwMDAwMDExMDExMGMxYzFkMGQxMjAw
+MDAxMzAzMWIwYjFhMGEwOTE5MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIiks
+d2hpdGVzdF9jb2xvcj03XV1sejQAKQEAABUCAAD1BXVzZXJkYXRhKCJpMzIiLDY0LCIwAQDAMWQy
+YjUzMDA3ZTI1CADwFzAwODc1MTAwYWI1MjM2MDA1ZjU3NGYwMGMyYzNjNzAwZmZmMWU4CABAMDA0
+ZAgAEWE2AGBmZmVjMjcKACBlNDgAQDI5YWQkAGA4Mzc2OWMgADE3N2E4ALBjY2FhMDAyNDYzYi8A
+8B4wYTVhMTAwNjU0Njg4MDAxMjUzNTkwMDcyMzAyZDAwNDUyZDMyMDBhMjg4NzlAAPANYWNjNTAw
+YjkwMDNlMDBlMjZiMDIwMDk1ZjA0MlAAIGIywACgNjRkZmY2MDBiZIkAAJYAQDBkYWJAAF05MDY3
+MAABBIAAZjhiNjBiNzgAZmRlZDFmMvgADwEAjQSwAQ8IAAhQNzRmIik=
+:: pal/red.pal
+b64$LS1bW3BvZCxiZ19jb2xvcj0wLGJsYWNrZXN0X2NvbG9yPTAsY3JlYXRlZD0iMjAyNS0xMi0w
+OSAwMDowMDozNyIsaGlkZGVuPXtbMF09ZmFsc2UsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVl
+LHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0
+cnVlLHRydWUsdHJ1ZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxm
+YWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxz
+ZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxmYWxzZSxm
+YWxzZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWV9LGhpZGRlbl90b2dnbGVzPXtbMF09dHJ1ZSx0
+cnVlLGZhbHNlLHRydWV9LGh1ZV9vZmZzZXQ9MCxpY29uPXVzZXJkYXRhKCJ1OCIsMTYsMTYsIjAw
+MDEwMTAxMDEwMTAxMDEwMTAxMDEwMDAwMDAwMDAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNjAxMDAw
+MDAwMDAwMDAxMDcwNzA3MDcwNzA3MDcwNzA2MDYwMTAwMDAwMDAwMDEwNzA3MDcwNzA3MDcwNzA3
+MDYwNjA2MDEwMDAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNjA2MDYwNjAxMDAwMDAxMDcwNzA3MDcw
+NzA3MDcwNzA3MDcwNzA3MDEwMDAwMDEwNzA3MDcwNzA3MDcwNzA3MDcwNzA3MDcwMTAwMDAwMTA3
+MDcwNjA2MDEwMTBkMGQwMTAxMDcwNzAxMDAwMDAxMDcwNzA2MDYwMTAxMGQwZDAxMDEwNzA3MDEw
+MDAwMDEwNzA3MDEwMTA3MDcwNjA2MGQwZDA3MDcwMTAwMDAwMTA3MDcwMTAxMDcwNzA2MDYwZDBk
+MDcwNzAxMDAwMDAxMDcwNzBkMGQwMTAxMGQwZDA2MDYwNzA3MDEwMDAwMDEwNzA3MGQwZDAxMDEw
+ZDBkMDYwNjA3MDcwMTAwMDAwMTA3MDcwNzA3MDcwNzA3MDcwNzA3MDcwNzAxMDAwMDAxMDcwNzA3
+MDcwNzA3MDcwNzA3MDcwNzA3MDEwMDAwMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAwIiks
+bG9ja2VkPXtbMF09dHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUs
+dHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVlLHRydWUsdHJ1ZSx0cnVl
+LGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZh
+bHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNl
+LGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLGZhbHNlLHRy
+dWUsdHJ1ZSx0cnVlLHRydWV9LG1vZGlmaWVkPSIyMDI1LTEyLTExIDE3OjMzOjE1Iixva3BhbF92
+ZXJzaW9uPSIxLjIuMyIscGlja2Vyc19tb2RlPSJsaW5lYXJfaHVlIixyZXZpc2lvbj0zNix0ZXN0
+X2N1YmVfY29sb3JzPXtbMF09ezE1LDMxLDR9LHszMSw0LDIwfSx7NCwyMCwyMX0sezEwLDksMjV9
+LHs5LDI1LDI0fSx7OCwyNCwyfSx7MjYsMTEsMjd9LHsxMSwyNywzfSx7MjcsMywxOX0sezI4LDE3
+LDE5fSx7MjgsMTIsMTZ9LHsxMiwxNiwxfSx7NiwyOSwxM30sezI5LDEzLDE4fSx7MTMsMTgsMX0s
+ezcsMjMsMTR9LHsyMywxNCwxM30sezE0LDMwLDE4fSx7Nyw2LDIyfSx7NiwyMiw1fSx7MjIsNSwy
+MX0sezEsMSwxfSx7MSwxLDF9LHsxLDEsMX19LHRlc3RfbW9kZT0iY3ViZXMiLHRlc3RfcmFtcF9j
+b2xvcnM9dXNlcmRhdGEoInU4IiwxMCwyNywiMDAxODA4MTkwOTBhMWEwYjFiMDAwNjAwMDAwMDAw
+MDAwMDAwMDMwMDE2MDAwMDAwMDAwMDAwMDAxMzAwMDUwMDAwMDAwMDAwMDAwMDAxMDAwZDAwMDAw
+MDAwMDAwMDAwMTAwMDFkMDAwMDAwMDAwMDAwMDAxMTAwMTcwMDAwMDAwMDAwMDAwMDBjMDAwZTAw
+MDAwMDAwMDAwMDAwMWMwMDFlMTIwMjE1MTQwNDFmMGYwNzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDE0MDQxZjBmMDgxODAyMDAwMDE1MDUxNjA2MDcxNzBlMWUwMDAwMDExMDExMGMxYzFkMGQxMjAw
+MDAxMzAzMWIwYjFhMGEwOTE5MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIiks
+d2hpdGVzdF9jb2xvcj03XV1sejQANwEAABUCAAD1BXVzZXJkYXRhKCJpMzIiLDY0LCIwAQDAMWQy
+YjUzMDA3ZTI1CADwFzAwODc1MTAwYWI1MjM2MDA1ZjU3NGYwMGMyYzNjNzAwZmZmMWU4CABAMDA0
+ZAgAEWE2AGBmZmVjMjcKACBlNDgAQDI5YWQkAGA4Mzc2OWMgADE3N2E4ALBjY2FhMDAyNDYzYi8A
+8B4wYTVhMTAwNjU0Njg4MDAxMjUzNTkwMDcyMzAyZDAwNDUyZDMyMDBhMjg4NzlAAPANYWNjNTAw
+YjkwMDNlMDBlMjZiMDIwMDk1ZjA0MlAAIGIywACgNjRkZmY2MDBiZIkAAJYAQDBkYWJAAFU5MDY3
+MAEABPgAwGI5MTE0MTAwZjEyOUAA5mZjODg3MzAwZmVjY2Fi_AAPAQCNBLABDwgACFA3NGYiKQ==
+:: sfx/.info.pod
+--[[pod,created="2025-11-13 21:07:43",modified="2025-12-14 19:08:36"]]
+:: sfx/0.sfx
+b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTA3LTMxIDA4OjMwOjI4Iixtb2RpZmllZD0iMjAyNS0x
+Mi0xMCAyMjo1NDoxNyIscmV2aXNpb249NThdXWx6NAA5AgAAhwsAAP8wcHh1AAMoAAAEAAQPQBAC
+DgABoAEgAqAOAA8QAA3wygECA0APD5AEBQYHQAyQCAkKC0AMkA8MDw0PDgxADPD-AQDr8BCqARAG
+DzAQASABIAUPfwACwAIQAg9AEAEgDyEP2gACFADwKQ9BAA94kA8hAiAPJFAFDgADATAPLJAPEgIg
+DxNQAQ-vEAEwD6OgCBAED08ABDACDzfwAwIQBg82VQDwEA-uEAUPgAAPQvBFDxjQAaAPDvADBAAP
+-w8M8AQLD6oSAPUFHgAPV-BiD-gKD-8PgA-3Dw0B8AmVAJEHEAHwAAIQAg2SABAHawDwBjaQDxEC
+EAQPKgABMAEP2gAREAKwAX4A-Q3BAAIwAg7wiw8TAAXwBQ8ND1oPHfAFCBAP--CUXwARDfMAVAHw
+AA8SXgABAQFSD0IAD2DtAIFAUAEP5BAB4F0A-xW1AAEwAvADAQ8JIA8MIA808G8G8AYBAA--8AUG
+AAnwlg-4CglgAAsRJV4ARQEQArBeABTZXgAQ4l4A-wUPEvCLDwzwBgIACfAFCwAJ8JQBAFcABgUU
+Ac8gATAPQPDDDygJ8MYuAP-----XH-8BAKzyBcgPQAALBjAvKfktIPktLyD5LfBwEwDyBQ82DzcZ
+Dy-5KxEZAfkrHyAZDPkrHAC0DwNA_S8C_S8M_S8RAD4wDzwTABFBEwAjDxAUAPEKAg8PMA0PNA83
+Dzz5LD8D_SwMDxgPEAr5LB4AXw8QQPmwCgBIH-8BAP-WUP-----d
+:: src/.info.pod
+--[[pod,created="2025-12-06 00:28:27",modified="2025-12-14 19:08:36"]]
+:: src/bg/.info.pod
+--[[pod,created="2025-12-05 21:24:53",modified="2025-12-14 19:08:36"]]
+:: src/gui/.info.pod
+--[[pod,created="2025-12-05 17:06:29",modified="2025-12-14 19:08:36"]]
+:: src/lib/.info.pod
+--[[pod,created="2025-12-05 00:42:58",modified="2025-12-14 19:08:36"]]
+:: src/view/.info.pod
+--[[pod,created="2025-12-07 17:49:00",modified="2025-12-14 19:08:36"]]
+:: [eoc]

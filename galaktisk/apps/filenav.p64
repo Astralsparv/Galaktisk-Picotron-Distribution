@@ -1,0 +1,3753 @@
+picotron cartridge // www.picotron.net
+version 2
+
+:: embed/
+:: gfx/
+:: map/
+:: patch/
+:: sfx/
+:: utils/
+:: auto.lua
+--[[pod_format="raw",created="2025-11-20 19:25:16",modified="2025-11-24 22:01:22",revision=5]]
+--zep's auto completion stuff
+
+function find_common_prefix(s0, s1)
+	if (type(s0) ~= "string") then return nil end
+	if (type(s1) ~= "string") then return nil end
+	if (s0 == s1) then return s0 end
+	local len = 0
+	while(sub(s0,1,len+1) == sub(s1,1,len+1)) do
+		len = len + 1
+		--printh(len)
+	end
+	return sub(s0,1,len)
+end
+
+
+function tab_complete_filename(cmd)
+	if (cmd == "") then return cmd end
+	-- get string
+	local args = split(cmd, " \"", false)  -- also split on " to allow tab-completing filenames inside strings
+	local prefix = args[#args] or ""
+	-- construct path prefix  -- everything (canonical path) except the filename
+	local prefix = currentPath..(prefix)
+	local pathseg = split(prefix,"/",false)
+	if (not pathseg) then return cmd end
+	local path_part = ""
+	for i=1,#pathseg-1 do
+		path_part = path_part .. "/" .. pathseg[i]
+	end
+	if (path_part == "") then path_part = "/" end -- canonical filename special case
+	prefix = (pathseg and pathseg[#pathseg]) or "/"
+	-- printh("@@@ path part: "..path_part.." pwd:"..pwd())
+	local files = ls(path_part)
+	if (not files) return cmd
+	-- find matches
+	local segment = nil
+	local matches = 0
+	local single_filename = nil
+
+	for i=1,#files do
+		--printh(prefix.." :: "..files[i])
+		if (sub(files[i], 1, #prefix) == prefix) then
+			matches = matches + 1
+			local candidate = sub(files[i], #prefix + 1) -- remainder
+
+			-- set segment to starting sequence common to candidate and segment
+			segment = segment and find_common_prefix(candidate, segment) or candidate
+			single_filename = path_part.."/"..files[i] -- used when single match is found
+		end
+	end
+	
+	if (segment) then
+		cmd = cmd .. segment
+		--cursor_pos = cursor_pos + #segment
+	end
+
+	if matches == 1 and single_filename and fstat(single_filename) == "folder" then
+		cmd ..= "/"
+	end
+
+	
+	return cmd
+end
+:: context.lua
+--[[pod_format="raw",created="2025-11-19 20:14:46",modified="2025-11-24 22:03:13",revision=345]]
+--right click context menu
+
+function update_context_menu()
+	menuitem()
+	local selected={}
+	for n,_ in pairs(selectedItems) do
+		add(selected,itemInfo(n))
+	end
+	if (#selected>1) then
+		menuitem{
+			id="about_file",
+			label = #selected.." items"
+		}
+	end
+	local file
+	local name
+	if (#selected==1) then
+		file=selected[1].path
+		name=filenameOf(file)
+	end
+	if (#selected==1) then
+		--special case host path.
+		--think the second one is impossible to get, just to be safe
+		if (file=="/desktop/host/" or file=="/desktop/host") then
+			menuitem{
+				id="open_host_path",	
+				label = "\^:00304f4141417f00 Open Host OS Folder",
+				action = function() send_message(2, {event="open_host_path", path = "/desktop/host", _delay = 0.25}) end
+			}
+	
+			menuitem{
+				id="unmount_host_desktop",	
+				label = "\^:002a012001201500 Unmount",
+				action = function() rm"/desktop/host" end
+			}
+			return --nothing else about this.
+		end
+		menuitem{
+			id="about_file",
+			label = "About "..file:basename(),
+			--[?] do I use about or icon?
+	--		label = "\^:1c367f7777361c00 About "..file:basename(),
+	--		label = "\^:1c367f7777361c00 "..file:basename(),
+			action = function()
+				create_process("/system/apps/about.p64", 
+					{argv={file}, window_attribs={workspace = "current", autoclose=true}})				
+			end
+		}
+		if (isPicotronCart(file)) then
+			menuitem{divider=true}
+	
+			menuitem{
+				id="show_cart_contents",	
+				label = "\^:0000fe8282fec27e Cart Contents",
+				action = function()
+					openFile(file,true)
+				end
+			}
+			menuitem{
+				id="show_cart_contents_new_window",
+				label = "\^:08080808f8080808  view in a New Window",
+				action = function()
+					--[!] make this use my filenav
+					create_process("/desktop/filenav/thefilenav.p64",
+					{ 
+						argv = {
+							file, 
+							file
+						}
+					})
+				end
+			}
+			menuitem{
+				id="unpack_cart",	
+				label = "\^:08080808f8000000  unpack",
+				action = function()
+					create_process(unpackCartLocation,{cart=file,unpacklocation=pwd().."/"..name:gsub("%.","_").."/"})
+				end
+			}
+			menuitem{
+				id="load_cart",	
+				label = "\^:007f41417f613f00 Load Cartridge",
+				action = function()
+					create_process("/system/misc/confirm.p64", 
+						{prompt = "Discard Unsaved Changes?", title = "Load", 
+						cart_to_load = file,
+						window_attribs = {workspace="current", autoclose=true}})
+				end
+			}
+			menuitem{
+				id="run",	
+				label = "\^:007f41417f613f00 Create Process",
+				action = function()
+					create_process(file,{})
+				end
+			}
+			if (options.extraCartridgeOptions) then
+				menuitem{divider=true}
+				menuitem{
+					id="clear_workspaces",	
+					label = "\^:007e7e7e7e183c00 Clear Workspace Meta",
+					action = function()
+						store_metadata(file,{workspaces={}})
+						notify("Cleared workspaces of "..file)
+					end
+				}
+				if (file:ext()!="p64.png") then
+					menuitem{
+						id="p64_png",	
+						label = "\^:ff81a18189ddffff Pack as p64.png",
+						action = function()
+							create_process(unpackCartLocation,{cart=file,unpacklocation=pwd().."/"..pureFilename(file)..".p64.png/"})
+						end
+					}
+				end
+				if (file:ext()!="p64.rom") then
+					menuitem{
+						id="p64_rom",	
+						label = "\^:0054ff8181ff2a00 Pack as p64.rom",
+						action = function()
+							create_process(unpackCartLocation,{cart=file,unpacklocation=pwd().."/"..pureFilename(file)..".p64.rom/"})
+						end
+					}
+				end
+				
+				if (file:ext()!="p64") then
+					menuitem{
+						id="p64",	
+						label = "\^:0054ff8181ff2a00 Pack as p64",
+						action = function()
+							create_process(unpackCartLocation,{cart=file,unpacklocation=pwd().."/"..pureFilename(file)..".p64/"})
+						end
+					}
+				end
+			end
+		end
+		if (isFolder(file,false)) then
+			menuitem{divider=true}
+			menuitem{
+				id="pack_cart",	
+				label = "\^:0000fe8282fec27e Pack as p64",
+				action = function()
+					create_process(unpackCartLocation,{cart=file,unpacklocation=pwd().."/"..name:gsub("%.","_")..".p64/"})
+				end
+			}
+		end
+		if (file:ext()=="lua") then
+			menuitem{divider=true}
+			menuitem{
+				id="run",
+				label = "\^:007f41417f613f00 Create Process",
+				action = function()
+					create_process(file,{})
+				end
+			}
+		end
+	elseif (#selected==0) then
+		menuitem{
+			id = "new_file",
+			label = "\^:0f19392121213f00 New File",
+			action = function()
+				push_intention("new_file", nil, nil, true)
+			end
+		}
+		
+		menuitem{
+			id = "new_folder",
+			label = "\^:00387f7f7f7f7f00 New Folder",
+			action = function() 
+				push_intention("new_folder", nil, nil, true)
+			end
+		}
+		menuitem{
+			id = "new_cart",
+			label = "\^:007f41417f613f00 New Cartridge",
+			action = function()
+				push_intention("new_cartridge", nil, nil, true)
+			end
+		}
+	end
+	
+	if (#selected>0) then
+		menuitem{divider=true}
+		menuitem{
+			id="delete_file",	
+			label = "\^:3e7f5d5d773e2a00 Delete",
+			action = delete_selected_files
+		}
+		menuitem{
+			id="copy_file",	
+			label = "\^:0f013d2525243c00 Copy",
+			action = function() copy_selected_files() end
+		}
+		menuitem{
+			id="cut_file",
+			label = "\^:0015200120012a00 Cut",
+			action = function() cut_selected_files() end
+		}
+		if (#selected==1) then
+			menuitem{
+				id="rename",
+				label = "\^:0f193921213f0015 Rename",
+				action = function()
+					push_intention("rename", nil, file, true)
+				end
+			}
+		end
+	end
+	--constant
+	menuitem{divider=true}
+	menuitem{
+		id="open_terminal",	
+		label = "\^:7f7d7b7d7f083e00 Open In Terminal",
+		action = function()
+			create_process("/system/apps/terminal.lua", {
+				argv={pwd()},
+				path=pwd()
+			})
+		end
+	}
+	if (#selected==1) then
+		if (isFolder(file,true)) then
+			menuitem{
+				id="open_path_in_anywhen",	
+				label = "\^:7f7d7b7d7f083e00 Anywhen",
+				action = function()
+					openFile(file.."@",true)
+				end
+			}
+		end
+		kind, size, origin = fstat(file)
+		if (kind=="file") then
+			menuitem{
+				id="open_host_path",	
+				label="\^:0b1b3b033f3f3f00 View in Host OS",
+
+				action=function()
+					-- delay so that mouse isn't held while new window is opening ._.
+					send_message(2, {event="open_host_path", path = fullpath(file), _delay = 0.25}) 
+				end
+			}
+			menuitem{
+				--why isn't this in zep's?
+				id="open",	
+				label="\^:0b1b3b033f3f3f00 Open",
+
+				action=function()
+					openFile(file)
+				end
+			}
+		end
+	end
+	-- just for formatting cleanliness with dividers
+	if (#selected==0) then
+		
+		menuitem{
+			id="open_host_path",	
+			label = "\^:00304f4141417f00 Open Host OS Folder",
+			action = function() send_message(2, {event="open_host_path", path = pwd(), _delay = 0.25}) end
+		}
+		menuitem{
+			id="mount_host_desktop",	
+			label = "\^:00304f4141417f00 Mount Host Desktop",
+			action = function()
+				send_message(2, {event="mount_host_desktop"})
+			end
+		}
+		menuitem{divider=true}
+		local p, m = unpod(get_clipboard())	
+		if m and m.pod_type == "file_references" and type(p) == "table" then	
+			menuitem{
+				id = "paste_files",
+				label = "\^:1e2d212121213f00 Paste "..#p.." Item"..(#p == 1 and "" or "s"),
+	
+				action = function() 
+					local mx,my,mb = mouse()
+					send_message(pid(), {event="drop_items", 
+						items = p,
+						dx = 0, dy = 0,
+						mx=curs.x, my=curs.y, -- (drop where the context menu item is!)
+						-- hold ctrl / shift to modify drop action (e.g. in filenav means force overwrite)
+						-- can use from context menu!
+						ctrl = key"ctrl", shift = key"shift", 
+					})
+				end
+			}
+			menuitem{divider=true}
+		end
+	end
+	--default filenav
+	menuitem{divider=true}
+	menuitem{
+		id="open_in_zep",
+		label = "\^:3f7f5077057f7e00 Zep's Filenav",
+		action = function()
+			local data=env()
+			data.argv[1]=pwd()
+			data.argv[2]=pwd()
+			data.corun_program=nil
+			data.zep=true
+			create_process(zepsFilenavLocation,data)
+			exit()
+		end
+	}
+	if (#selected==0) then
+		menuitem{
+			id="readme",
+			label = "\^:1e22425a425a427e Readme",
+			action = function()
+				open(readmeLocation)
+			end
+		}
+		menuitem{
+			id="settings",
+			label = "\^:245a815a5a815a24 Settings",
+			action = function()
+				create_process(settingsLocation,{parent=pid()})
+			end
+		}
+	end
+end
+:: debug.lua
+--[[pod_format="raw",created="2025-11-22 19:18:07",modified="2025-11-22 19:18:58",revision=3]]
+function decompTable(table, indent, seen)
+    seen = seen or {}
+    if seen[table] then
+        return "<cycle>"
+    end
+    seen[table] = true
+    
+    res=""
+    indent=indent or 0
+    local pad=""
+    for i=1, indent do
+    pad..=" "
+    end
+    for key,val in pairs(table) do
+    local k=key
+    if (type(k)=="number") then
+        k="["..k.."]"
+    end
+    if (type(val)=="table") then
+        res..=k.."={\n"
+        res..=pad..decompTable(val,indent+1,seen).."\n"
+        res..="},"
+    else
+        local v=val
+        if (type(v)=="string") then
+            v="\""..v.."\""
+        end
+        res..=pad..k.."="..tostr(v)..","
+    end
+        res..="\n"
+    end
+    res=res:sub(1,#res-2)
+    return res
+end
+:: drag.lua
+--[[pod_format="raw",created="2025-11-21 15:37:16",modified="2025-11-24 18:45:26",revision=105]]
+--needs _ because _ is self??
+function drag_selected_files(_,msg)
+	if (dragging_files) return
+	if (abs(msg.mx-msg.mx0)<2 and abs(msg.my-msg.my0)<3) return
+	update_context_menu()
+	dragging_files={}
+	local idx=0
+
+	--get data of selected items
+	local ind=1
+	for i,_ in pairs(selectedItems) do
+		local itm=items[i]
+		local v={}
+		--translate to zep's system
+		v.attrib, v.size=fstat(itm.path)
+		v.fullpath=fullpath(itm.path)
+		v.filename=filenameOf(itm.path)
+		v.filename_printable=v.filename
+		if (v.attrib=="folder") then
+			v.filename_printable="\006:00387f7f7f7f7f00 "..v.filename_printable
+		end
+		v.meta=fetch_metadata(itm.path)
+		v.icon=iconOf(itm.path)
+		v.pod_type="file_reference"
+		local o=fileObjects[itemIndexToGUIIndex[i]]
+		if (o) then
+			o=o.icon
+		else
+			o=iconOf(v.fullpath)
+		end
+		v.x,v.y=o.x,o.y
+		
+		local v0=v
+		v = unpod(pod(v)) -- clone variable
+		local mx, my = mouse()
+		v.xo = v.x and (v.x - mx) or 0
+		v.yo = v.y and (v.y - my) or 0
+		add(dragging_files,v)
+	end
+	
+	local mx, my = mouse()
+
+	for i=1,#dragging_files do
+		local v=dragging_files[i]
+		v.dist=(v.x-mx)^2+(v.y-my)^2
+	end
+
+	local tbl = dragging_files
+	for pass=1,#tbl do
+		for i=1,#tbl-1 do
+			if (tbl[i].dist == tbl[i+1].dist and tbl[i].filename > tbl[i+1].filename) or
+				tbl[i].dist > tbl[i+1].dist
+			then
+				tbl[i],tbl[i+1] = tbl[i+1],tbl[i]
+			end
+		end
+	end
+
+		
+	if (#dragging_files > 0) then
+		-- send a message to window manager
+		send_message(3,{
+			event = "drag_items",
+			items	 = dragging_files
+		})
+	else
+		dragging_files = nil -- cancel; nothing to drag
+	end
+end
+:: embed/settings.lua
+--[[pod_format="raw",created="2025-11-22 19:54:26",modified="2025-11-22 22:37:13",revision=109]]
+local _env=env()
+local parent=_env.parent
+
+appdataPath="/appdata/galaktiskFilenav/"
+mkdir(appdataPath)
+local defaultOptions={--while under cpu threshold (0-1)
+	itemLoadThreshold=0.1,
+	searchThreshold=0.1,
+	clickingFileShowsPath=true,
+	lowPerformanceMode=false,
+	terminalPath="/system/apps/terminal.lua",
+	fakeDelete=false, --safety until tested.
+	displayDebug=false
+}
+options=fetch(appdataPath.."options.pod") or defaultOptions
+
+for key,val in pairs(defaultOptions) do
+	if (options[key]==nil) options[key]=options[key] or val
+end
+
+store(appdataPath.."options.pod",options)
+
+local defaultTheming={
+	main={
+		background=23,
+		topBar=14
+	},
+	item={
+		background=23,
+		col=1,
+		selectedcol=7,
+		selectedbackground=30
+	},
+	search={
+		buttonBackground=14,
+		buttonText=7
+	},
+	intention={
+		background=14,
+		text=0,
+		textbox={
+			fg=7,
+			bg=1
+		},
+		--[!] get these working
+		buttonBackground=2,
+		buttonBorder=0xe12,
+		buttonText=7
+	},
+	displaymode="default" --p8 displaymode is very laggy!
+}
+
+theming=fetch(appdataPath.."theming.pod") or defaultTheming
+
+for key,val in pairs(defaultTheming) do
+	if (theming[key]==nil) theming[key]=theming[key] or val
+end
+store(appdataPath.."theming.pod",theming)
+
+pal(7,theming.item.col)
+
+window{
+	width=180,
+	height=180,
+	title="Filenav Settings"
+}
+
+
+function boolToCheck(bool)
+	if (bool) return "[/]"
+	return "[x]"
+end
+
+function updateOptions()
+	send_message(parent,{event="updateOptions"})
+	store(appdataPath.."options.pod",options)
+end
+
+function updateTheming()
+	send_message(parent,{event="updateTheming"})
+	store(appdataPath.."theming.pod",theming)
+end
+
+section="options"
+--create a gui, just using update_all - too lazy to add the optimise thing since it won't be used much
+function buildGUI()
+	gui=create_gui{}
+	
+	if (section=="theming") then
+		gui:attach_button{
+			x=2,y=2,
+			label="Open Options",
+			tap=function()
+				section="options"
+				buildGUI()
+			end
+		}
+		gui:attach{
+			x=2,y=16,
+			width=180,height=10,
+			draw=function()
+				print("\014/APPDATA/GALAKTISKfILENAV/THEMING.POD",0,0,7)
+			end
+		}
+	else
+		local y=2
+		gui:attach_button{
+			x=2,y=2,
+			label="Open Theming",
+			tap=function()
+				section="theming"
+				buildGUI()
+			end
+		}
+		y+=14
+		gui:attach_button{
+			x=2,y=y,
+			label="Low Performance Mode "..boolToCheck(options.lowPerformanceMode),
+			tap=function(self)
+				options.lowPerformanceMode=not options.lowPerformanceMode
+				self.label="Low Performance Mode "..boolToCheck(options.lowPerformanceMode)
+				updateOptions()
+			end
+		}
+		y+=14
+		gui:attach_button{
+			x=2,y=y,
+			label="Selected file shows its path "..boolToCheck(options.clickingFileShowsPath),
+			tap=function(self)
+				options.clickingFileShowsPath=not options.clickingFileShowsPath
+				self.label="Selected file shows its path "..boolToCheck(options.clickingFileShowsPath)
+				updateOptions()
+			end
+		}
+		y+=14
+		gui:attach_button{
+			x=2,y=y,
+			label="Fake deletion of files "..boolToCheck(options.fakeDelete),
+			tap=function(self)
+				options.fakeDelete=not options.fakeDelete
+				self.label="Fake deletion of files "..boolToCheck(options.fakeDelete)
+				updateOptions()
+			end
+		}
+		y+=14
+		gui:attach_button{
+			x=2,y=y,
+			label="Show Debug "..boolToCheck(options.displayDebug),
+			tap=function(self)
+				options.displayDebug=not options.displayDebug
+				self.label="Show Debug "..boolToCheck(options.displayDebug)
+				updateOptions()
+			end
+		}
+		y+=16
+		gui:attach{
+			x=2,y=y,
+			width=178,height=10,
+			draw=function()
+				print("Path of the terminal",0,0,7)
+			end
+		}
+		y+=10
+		terminalPath=gui:attach_text_editor{
+			x=2,y=y,
+			width=175,
+			height=15,
+			update=function()
+				local p=terminalPath:get_text()[1]
+				if (#p>0 and options.terminalPath!=p) then
+					--better way to do with fstat iirc
+					if (pod(fullpath(p))!=nil) then
+						options.terminalPath=p
+						updateOptions()
+						notify("Updated terminal path")
+					else
+						notify("Invalid path")
+					end
+				end
+			end,
+			key_callback={
+				enter=function()
+					local p=terminalPath:get_text()[1]
+					--better way to do with fstat iirc
+					if (#p>0 and pod(fullpath(p))!=nil) then
+						options.terminalPath=p
+						updateOptions()
+						notify("Updated terminal path")
+					else
+						notify("Invalid path")
+					end
+				end,
+				tab=function()
+					
+				end
+			}
+		}
+		terminalPath:set_text(options.terminalPath)
+		y+=16
+		gui:attach{
+			x=2,y=y,
+			width=178,height=10,
+			draw=function()
+				print("CPU threshold for loading files",0,0,7)
+			end
+		}
+		y+=10
+		loadFileThreshold=gui:attach_text_editor{
+			x=2,y=y,
+			width=175,
+			height=15,
+			update=function()
+				local p=tonum(loadFileThreshold:get_text()[1])
+				if (options.itemLoadThreshold!=p) then
+					if (p!=nil and p!=0) then
+						options.itemLoadThreshold=p
+						updateOptions()
+						notify("Updated CPU threshold")
+					else
+						notify("Invalid CPU threshold")
+					end
+				end
+			end,
+			key_callback={
+				enter=function()
+					local p=tonum(loadFileThreshold:get_text()[1])
+					if (options.itemLoadThreshold!=p) then
+						if (p!=nil and p!=0) then
+							options.itemLoadThreshold=p
+							updateOptions()
+							notify("Updated CPU threshold")
+						else
+							notify("Invalid CPU threshold")
+						end
+					end
+				end,
+				tab=function()
+					
+				end
+			}
+		}
+		loadFileThreshold:set_text(tostr(options.itemLoadThreshold))
+		y+=16
+		gui:attach{
+			x=2,y=y,
+			width=178,height=10,
+			draw=function()
+				print("CPU threshold for searching",0,0,7)
+			end
+		}
+		y+=10
+		searchThreshold=gui:attach_text_editor{
+			x=2,y=y,
+			width=175,
+			height=15,
+			update=function()
+				local p=tonum(searchThreshold:get_text()[1])
+				if (options.searchThreshold!=p) then
+					if (p!=nil and p!=0) then
+						options.searchThreshold=p
+						updateOptions()
+						notify("Updated CPU threshold")
+					else
+						notify("Invalid CPU threshold")
+					end
+				end
+			end,
+			key_callback={
+				enter=function()
+					local p=tonum(searchThreshold:get_text()[1])
+					if (options.searchThreshold!=p) then
+						if (p!=nil and p!=0) then
+							options.searchThreshold=p
+							updateOptions()
+							notify("Updated CPU threshold")
+						else
+							notify("Invalid CPU threshold")
+						end
+					end
+				end,
+				tab=function()
+					
+				end
+			}
+		}
+		searchThreshold:set_text(tostr(options.searchThreshold))
+		y+=16
+	end
+end
+
+function _init()
+	buildGUI()
+end
+
+function _update()
+	gui:update_all()
+end
+
+function _draw()
+	cls(theming.main.background)
+	gui:draw_all()
+end
+:: env.lua
+--[[pod_format="raw",created="2025-11-20 21:09:16",modified="2025-11-24 20:16:48",revision=108]]
+--env()!!
+
+--[[
+not working:
+	select_file
+	desktop (unsure if will ever be supported)
+]]--
+
+_env=env()
+if (_env.sandbox=="bbs") then
+	notify("This doesn't run correctly when sandboxed - going to zeps")
+end
+--failsafe to go to zep's filenav for anything unsupported
+--zep arg to just always go to zeps
+if (
+(_env.argv and _env.argv[1]=="-desktop")
+or (_env.argv and _env.argv[1]=="zep")
+or (_env.zep)
+or (_env.sandbox=="bbs")
+--or true
+) then
+	_env.corun_program=nil
+	create_process(zepsFilenavLocation,_env)
+	notify("Galaktisk Filenav does not support this.")
+	exit()
+end
+startPath=_env.path or startPath
+if (env().argv and env().argv[1]) then
+	local ff=env().argv[1]
+	if (fstat(ff) == "folder") startPath=ff
+end
+if (_env.intention) then
+	push_intention(
+		_env.intention,
+		_env.intention and _env.parent_pid, 
+		_env.intention and _env.intention_filename
+	)
+end
+:: fileActions.lua
+--[[pod_format="raw",created="2025-11-23 02:22:18",modified="2025-11-23 03:10:36",revision=46]]
+--unlike zep's, this is purely copy, not including cut
+function copy_selected_files()
+	local copied={}
+	for k,_ in pairs(selectedItems) do
+		local i=unpod(pod(items[k])) --clone
+		i.fullpath=i.path
+		i.op="copy"
+		i.pod_type="file_reference"
+		add(copied, i)
+	end
+	if (#copied<1) return
+	set_clipboard(pod(copied,0x7,{pod_type="file_references"}))
+	notify("copied "..#copied.." items to clipboard")
+end
+
+function cut_selected_files()
+	local copied={}
+	mkdir("/ram/compost")
+	mkdir("/ram/compost/cut")
+	for k,_ in pairs(selectedItems) do
+		local i=items[k]
+		local id=tostr(stat(333)) --get a unique id, makes sure it doesn't replace anything
+		id=id:sub(1,#id-2)--strips the .0
+		mv(i.path,"/ram/compost/cut/"..i.path:basename()..id)
+		local itm={}
+		itm.fullpath="/ram/compost/cut/"..i.path:basename()..id
+		itm.op="cut"
+		itm.pod_type="file_reference"
+		itm.id=id --for stripping it later
+		add(copied, itm)
+	end
+	if (#copied<1) return
+	set_clipboard(pod(copied,0x7,{pod_type="file_references"}))
+	notify("cut "..#copied.." items to clipboard")
+	full_rebuild()
+end
+
+function delete_selected_files()
+	mkdir("/ram/compost")
+	local num = 0
+	local err
+	local res=""
+	if (options.fakeDelete) res="Fake deletion"
+	for key,_ in pairs(selectedItems) do
+		local fullpath = fullpath(items[key].path)
+		if (options.fakeDelete) then
+			res=res.." "..fullpath:basename()
+		else
+			res=mv(fullpath, "/ram/compost/"..fullpath:basename())
+		end
+		num+=1
+	end
+	if (res) err=res
+	if (err) then
+		printh("moved "..num.." items to /ram/compost // ** error ** "..err)
+		notify("moved "..num.." items to /ram/compost // ** error ** "..err)
+	else
+		notify("moved "..num.." items to /ram/compost")
+	end
+	if (num>0) then
+		full_rebuild()
+	end
+end
+:: files.lua
+--[[pod_format="raw",created="2025-10-29 06:11:05",modified="2025-11-24 19:43:40",revision=310]]
+--[[
+.p64.png & .p64.rom
+.p8.png
+
+cause issues since non standard... :C
+
+ext(path,extLength) lets you set a specific amount of .x.y
+]]--
+
+function filenameOf(path)
+	return path:match("([^/]+)/?$")
+end
+
+function pureFilename(path)
+	local n=path:basename()
+	return n:sub(1,#n-#n:ext()-1)
+end
+
+function extensionOf(path,extLength)
+	extLength=extLength or 1
+	
+	local filename=filenameOf(path)
+	if (filename==nil) return "" --root folder only?
+	local ext=""
+	local references={}
+	--100% needs cleanup
+	for ext in filename:gmatch("[^%.]+") do
+		add(references,ext)
+	end
+	deli(references,1) --first part is filename itself, not ext
+	if (#references==0) return ""
+	ext=""
+	for i=max(1,#references-extLength+1), #references do
+		ext=ext..references[i]
+		if (i<#references) ext=ext.."."
+	end
+	return ext
+end
+
+function isPicotronCart(path)
+	local ext=extensionOf(path,2)
+	if (ext=="p64.png") return true
+	if (ext=="p64.rom") return true
+	if (ext=="p64") return true
+end
+
+function isFolder(path,includeCarts)
+	if (includeCarts==nil) includeCarts=true
+	local kind,size,origin=fstat(path)
+	if (not includeCarts) if (isPicotronCart(path)) return false
+	return kind=="folder"
+end
+
+--need to add custom stuff like spaces in file names
+function getTitle(path,meta)
+	meta=(meta or fetch_metadata(path)) or {}
+--	local title=meta.title or ""
+	local title="" --full titles seem to be an issue as of sizing :(
+	if (title=="") then
+		title=filenameOf(path)
+	end
+	return title
+end
+
+function correctFolderPath(path)
+	if (isFolder(path) and sub(path,-1)!="/") path=path.."/"
+	return path
+end
+
+function truePathOf(spath)
+	if (extensionOf(spath,1)=="loc") then
+		local action={}
+		local argv={}
+		local path=spath
+		local paths={} --anti recursive loop
+		while (extensionOf(path,1)=="loc") do
+			if (fetch(path)==nil) then --file does not exist
+				return nil
+			end
+			action=fetch(path).action or {}
+			argv=fetch(path).argv or {}
+			path=fetch(path).location
+			if (paths[path]) then --already searched, loop
+				return nil
+			end
+			paths[path]=true
+		end
+		return path, action, argv
+	end
+	return spath, {}, {}
+end
+
+--e.g: pathSegmentsHaveSuffix("/app.bin/",".bin")
+function pathSegmentsHaveSuffix(path,suffix)
+	for segment in path:gmatch("[^/]+") do
+		if (segment:sub(-#suffix)==suffix) then
+			return true
+		end
+	end
+	return false
+end
+
+function check_for_overwrites(msg)
+	for i=1, #msg.items do
+		local fn=msg.items[i].filename or msg.items[i].fullpath:basename()
+		--check for id (from cut)
+		if (msg.items[i].id) then
+			--strip id
+			fn=fn:sub(1,#fn-#msg.items[i].id)
+		end
+		local kind, size, origin = fstat(fn)
+		if (kind!=nil) then
+			return fn
+		end
+	end
+	return nil
+end
+:: functs.lua
+--[[pod_format="raw",created="2025-10-29 06:27:27",modified="2025-11-01 01:35:47",revision=69]]
+--unused
+
+--find all instances of a substr
+--function findAll(str,pattern,pointer)
+--	pointer=pointer or 1 --starting point of :find()
+--	local findings={} --indexes of each match
+--	while true do
+--		local first,last=str:find(pattern,pointer)
+--		if (first) then
+--			add(findings,first)
+--			pointer=last+1
+--		else --no more instances of pattern
+--			break
+--		end
+--	end
+--	if (#findings==0) return nil --makes easier use of in code, i think
+--	return findings
+--end
+
+function swapCase(txt)
+	txt=txt:gsub("%a", function(c)
+		if c:match("%l") then
+			return c:upper()
+		else
+			return c:lower()
+		end
+	end)
+	return txt
+end
+
+function joinPath(a,b)
+	if sub(a,-1) == "/" then
+		a=sub(a,1,-2)
+	end
+	if sub(b,1,1) == "/" then
+		b=sub(b,2)
+	end
+	return a.."/"..b
+end
+:: gui.lua
+--[[pod_format="raw",created="2025-10-29 05:40:54",modified="2025-11-24 19:22:11",revision=953]]
+local iconSpacing=32
+filesStart={x=2,y=16}
+
+scrollY=0
+
+local fileWidth,fileHeight,filePadding=64,24,4
+local iconWidth,iconHeight=16,16
+if (theming.displaymode=="p8") then
+	fileWidth,fileHeight,filePadding=32,12,2
+	iconWidth,iconHeight=8,8
+end
+
+local colWidth=fileWidth+filePadding
+local rowHeight=fileHeight+filePadding
+
+local function tap(self)
+	selectItem(self.itemIndex)
+end
+local function doubleclick(self)
+	openFile(self.itemIndex)
+end
+local function release(self)
+	dragging_files=nil
+end
+
+function fixMaxScrollY(cols)
+	cols=cols or max(1,flr((windowData.width-2)/colWidth))
+	maxScrollY=max(0,ceil(#items/cols)*(fileHeight+filePadding)-(windowData.height-filesStart.y))+filePadding
+	--[!] for intention to fit, make this check intention
+	maxScrollY+=20
+end
+
+--better name for this
+function buildNonFileGUI(buildIntention)
+	gui=create_gui{} --also can have intention
+	--build these last... need to go on top
+	topBar=gui:attach{
+		x=0,y=0,
+		width=windowData.width,height=16,
+		update=function(self)
+			self.width=windowData.width
+		end,
+		draw=function(self)
+			rectfill(0,0,self.width-1,self.height-1,theming.main.topBar)
+		end
+	}
+
+	--left side buttons
+	
+	--might end up becoming a button to toggle list/grid display
+	--currently search button, with animation when searching
+	gui:attach{
+		x=0,y=0,
+		width=16,height=16,
+		cursor="pointer",
+		spi=1,
+		last=0,
+		draw=function(self)
+			local sp=0
+			if (searching) then
+				self.spi+=(time()-self.last)*8
+				self.last=time()
+				if (flr(self.spi)>4) self.spi=1
+				sp+=flr(self.spi)*8
+			end
+			spr(sp,0,0)
+		end,
+		tap=function()
+			createSearchWindow()
+		end
+	}
+	--go to ../
+	gui:attach{
+		x=16,y=0,
+		width=16,height=16,
+		cursor="pointer",
+		draw=function()
+			spr(1,0,0)
+		end,
+		tap=function()
+			openParentFolder()
+		end
+	}
+	--right side of buttons
+	--go to /ram/cart/
+	gui:attach{
+		x=windowData.width-32,y=0,
+		width=16,height=16,
+		cursor="pointer",
+		update=function(self)
+			self.x=windowData.width-32
+		end,
+		draw=function()
+			spr(2,0,0)
+		end,
+		tap=function()
+			openPath("/ram/cart")
+		end
+	}
+	--go to root
+	gui:attach{
+		x=windowData.width-16,y=0,
+		width=16,height=16,
+		cursor="pointer",
+		update=function(self)
+			self.x=windowData.width-16
+		end,
+		draw=function()
+			spr(3,0,0)
+		end,
+		tap=function()
+			openPath("/")
+		end
+	}
+	--assuming identical size icons left/right
+	pathBox=gui:attach_text_editor{
+		x=iconSpacing,y=2,
+		width=windowData.width-iconSpacing*2,height=12,
+		update=function(self)
+			self.width=windowData.width-iconSpacing*2
+		end,
+		key_callback={
+			enter=function(self)
+				openPath(self:get_text()[1])
+			end,
+			tab=function()
+				
+			end
+		}
+	}
+	pathBox:set_text(pwd())
+	if (buildIntention) then
+		constructIntentionPanel()
+	end
+end
+
+function buildGUI(buildIntention)
+	buildNonFileGUI(buildIntention)
+	filesGui=create_gui{} --seperate so it can be cached as image
+	filesGui:attach{
+		x=0,y=0,
+		width=windowData.width,height=windowData.height
+	}
+	--items/files
+	--icons & textboxes are seperate gui objects
+	
+	fileObjects={}
+	
+	local cols=max(1,flr((windowData.width-2)/colWidth))
+	fixMaxScrollY(cols)
+	
+	visibleRows=ceil((windowData.height-filesStart.y)/rowHeight)+1
+	
+	local visibleCount=visibleRows*cols
+	
+	local startSlot=max(0,flr(scrollY/rowHeight))*cols+1
+	for i=1,visibleCount do
+		local index=i+startSlot-1
+		local icon=filesGui:attach{
+			x=0,y=0,
+			width=16,height=16,
+			itemIndex=index, --store less data per gui object, just store index to reference
+			visible=true,
+			cursor="pointer",
+			draw=function(self)
+				if (not self.visible) return
+--				if (self.itemIndex<1) return
+--				if (self.itemIndex>#items) return
+--				rectfill(0,0,self.width-1,self.height-1,1)
+
+				--use sspr for p8 sizes!
+				sspr(items[self.itemIndex].icon,0,0,16,16,0,0,iconWidth,iconHeight)
+			end,
+			tap=tap,
+			doubleclick=doubleclick,
+			drag=drag_selected_files,
+			release=release
+		}
+		local h=10
+		if (theming.displaymode=="p8") h=7
+		local textbox=filesGui:attach{ --x,y handled by the icon!
+			x=0,y=0,
+			width=0,height=h,
+			itemIndex=index,
+			visible=true,
+			cursor="pointer",
+			draw=function(self)
+				if (not self.visible) return
+				local title=items[self.itemIndex].title
+				if (theming.displaymode=="p8") title="\014"..title
+				if (selectedItems[self.itemIndex]) then
+					rectfill(0,0,self.width-1,self.height-1,theming.item.selectedbackground)
+					print(title,1,1,theming.item.selectedcol)
+				else
+					rectfill(0,0,self.width-1,self.height-1,theming.item.background)
+					print(title,1,1,theming.item.col)
+				end
+			end,
+			tap=tap,
+			doubleclick=doubleclick
+		}
+		textbox:push_to_back()
+		add(fileObjects,{icon=icon,textbox=textbox})
+	end
+	
+	upd_guiItems()
+end
+
+function upd_guiItems()
+	itemIndexToGUIIndex={}
+	local cols=max(1,flr((windowData.width-2)/colWidth))
+	local firstRow=flr(scrollY/rowHeight)
+	local lastRow=flr((scrollY+windowData.height)/rowHeight)
+	local startSlot=max(0,firstRow*cols+1)
+	local endSlot=min(#items,(lastRow+1)*cols)
+	--centering files
+	local xoffset=(windowData.width-colWidth*cols)/2
+--	xoffset=0
+	for i,obj in ipairs(fileObjects) do
+		local itemIndex=startSlot+i-1
+		if (itemIndex<=endSlot) then
+			local prevItemIndex = obj.icon.itemIndex
+			if (itemIndex != prevItemIndex) then
+				obj.icon.itemIndex = itemIndex
+				obj.textbox.itemIndex = itemIndex
+			end
+			itemIndexToGUIIndex[itemIndex]=i
+
+			local row=flr((itemIndex-1)/cols)
+			local col=(itemIndex-1)%cols
+			local x=filesStart.x+filePadding+col*colWidth+xoffset
+			local y=filesStart.y+filePadding+row*rowHeight-scrollY
+			local ix=x+fileWidth/2-iconWidth/2
+			if (obj.icon.x!=ix or obj.icon.y!=y) then
+				obj.icon.x=ix
+				obj.icon.y=y
+				if (theming.displaymode=="p8") then
+					obj.textbox.x=x+fileWidth/2-#items[itemIndex].title*fontWidth/2
+					obj.textbox.y=y+8
+					obj.textbox.width=#items[itemIndex].title*fontWidth+1
+				else
+					obj.textbox.x=x+fileWidth/2-#items[itemIndex].title*fontWidth/2
+					obj.textbox.y=y+17
+					obj.textbox.width=#items[itemIndex].title*fontWidth+1
+				end
+			end
+		end
+		local visible=(itemIndex<=endSlot)
+		if (not visible) then
+			obj.icon.x=-100
+			obj.textbox.x=-100
+		end
+		obj.icon.visible=visible
+		obj.textbox.visible=visible
+	end
+	reFileRenderNeeded=true
+end
+
+function pushSelectedToFront()
+	for i=1, #fileObjects do
+		if (selectedItems[fileObjects[i].textbox.itemIndex]) then
+			fileObjects[i].textbox:bring_to_front()
+		end
+	end
+end
+:: helper.lua
+--[[pod_format="raw",created="2025-11-20 21:17:58",modified="2025-12-14 18:11:46",revision=47]]
+function full_rebuild(clearIntention)
+	if (clearIntention==nil) clearIntention=false
+	if (clearIntention) then
+		intention=nil
+		intention_requester_proc_id=nil
+		intention_filename=nil
+		intentionList={}
+	end
+	
+	loadItems()
+	buildGUI()
+	deselectAll()
+end
+:: icon.lua
+--[[pod_format="raw",created="2025-10-29 16:32:24",modified="2025-11-20 21:28:27",revision=175]]
+--sprites are from v0.2.1b - colored on startup to reduce costs
+iconSpriteOffset=64
+
+iconReference={
+	lua = 8,
+	gfx = 9,
+	map = 10,
+	sfx = 11,
+	pos = 12,
+	txt = 13,
+	p64 = 16,
+	["p64.png"] = 16,
+	["p64.rom"] = 16,
+	["p8.png"] = 17,
+	p8 = 17,
+	loc = 3,
+	pod = 12,
+}
+
+function iconOf(path,meta)
+	filename=filenameOf(path)
+	meta=(meta or fetch_metadata(path)) or {}
+	if (meta.icon) return meta.icon
+	local ext=extensionOf(filename,2)
+	local kind,size,origin=fstat(path)
+	if (kind=="folder" and not isPicotronCart(path)) then
+		if (origin and origin:sub(1,5) == "host:") then --it's le host desktop folder thing
+			return get_spr(4+iconSpriteOffset)
+		else
+			return get_spr(2+iconSpriteOffset) --normal folder
+		end
+	elseif (iconReference[ext]) then
+		return get_spr(iconReference[ext]+iconSpriteOffset)
+	end
+	return get_spr(1+iconSpriteOffset)
+end
+:: intention.lua
+--[[pod_format="raw",created="2025-11-20 12:25:08",modified="2025-11-24 19:04:12",revision=228]]
+--[[
+credits to zep for the basis of this intention system
+intention, hoping to get same as zep's filenav
+making it similar/same to get better compatability for stuff and possibly fully replace filenav.p64?
+]]--
+
+intentionList={}
+
+function push_intention(p0,p1,p2,new_filenav)
+	--add previous intention to list?
+	if (intention) then
+		add(intentionList,
+			{
+				intention,
+				intention_requester_proc_id,
+				intention_filename
+			}
+		)
+	end
+	init_intention(p0,p1,p2)
+	rebuildGUI=true
+end
+
+--turns from not setup intention to an intention in use
+function init_intention(p0, p1, p2)
+	-- can be nill (e.g. pop last intention off stack to remove intention panel)
+	intention = p0
+	intention_requester_proc_id = p1
+	intention_filename = p2
+	
+	intention_dat = {
+		save_file_as  = {"Save As", "Save"}, -- "Save File As" doesn't fit
+		select_file   = {"Select File", "Select"}, -- similar to save_file_as but general purpose name (up to requester what to do with selected file)
+		open_file     = {"Open File", "Open"},
+		new_file      = {"New File", "Create"},
+		new_folder    = {"New Folder", "mkdir"},
+		new_cartridge = {"New Cart", "Create"},
+		new_tab       = {"New File", "Create", "New Tab"}, -- can either open a file, or create a file  -->  window title is "New Tab"
+		rename        = {"Rename", "Rename"}, -- could be file or folder
+		confirm_file_overwrite = {"Overwrite?", "Overwrite"} -- not "Confirm" on right -- confirm what? and too visually similar to "Cancel"
+	}
+
+	if intention and intention_dat[intention] then
+		intention_title  = intention_dat[intention][1] -- window title and bottom left
+		intention_action = intention_dat[intention][2] -- button on right
+		intention_window_title = intention_dat[intention][3] or intention_title
+	end
+
+	if (intention_title == "Overwrite?") intention_title = "\f1Overwrite "..intention_text:get_text()[1].."?"
+end
+
+function constructIntentionPanel()
+	--zep's code, slightly modified!
+	local panel=gui:attach{
+		x=0,y=0,vjustify="bottom",
+		width_rel=1,
+		height=19
+	}
+	
+	function panel:draw()
+		rectfill(0,0,self.width-1,self.height-1,theming.intention.background)
+		local label = intention_title..":"
+		if (intention_title == "Rename") intention_title = "Rename As:"
+		print(intention_title,6,6,theming.intention.text)
+	end
+	
+	local wwa = 80
+	local xx = -6
+	
+	local btn1 = panel:attach_button{
+		x = xx, justify = "right", y = 3,
+		label = intention_action,
+--		fgcol=theming.intention.buttonText,
+--		border = theming.intention.buttonBorder,
+--		bgcol=theming.search.buttonBackground,
+		tap = process_intention
+	}
+	
+	xx -= btn1.width
+	xx -= 4
+	wwa += btn1.width+4
+--	[?] why isn't it the same?
+--	if (#intentionList > 1) then
+	if (true) then
+ 		local el = panel:attach_button{
+			x = xx, justify = "right", y = 3,
+			label = "Cancel",
+			--bgcol = 0x0707,
+			--fgcol = 0x0e01,
+			tap = function()
+				pop_intention()
+			end
+		}
+		xx -= el.width
+		xx -= 4
+		wwa += el.width+4
+	end
+	
+	if (intention == "confirm_file_overwrite") then
+		-- intention_text still exists; just is not visible
+		navtext:set_keyboard_focus(false) -- don't want navbar cursor blinking
+	else
+		intention_text = panel:attach_text_editor{
+			x=64,y=4,
+			width=100,
+			width_rel = 1.0,
+			width_add = - wwa,
+			height=12,
+			max_lines = 1,	
+			key_callback = { 
+				enter = process_intention, -- same as clicking on the button next to it ("Save As")
+
+				-- 0.2.0h: can tab complete bottom text field
+				tab = function ()
+					local path = intention_text:get_text()[1]
+					path = tab_complete_filename(path)
+					
+					intention_text:set_text{path}
+					-- hacky way to put the mouse cursor at the end
+					intention_text:click({mx=1000,my=2})
+					
+				end
+			}
+		}
+		
+		intention_text:set_keyboard_focus(true)
+	end
+
+	if (intention_filename) then
+		local str = intention_filename:basename()
+		local ext = str:ext() or ""
+		intention_text:set_text{str}
+		intention_text:set_cursor(#str - #ext,1)
+	end
+end
+
+function process_intention()
+	if (not intention_text) return
+	
+	local filename = fullpath(intention_text:get_text()[1])
+
+	if (not filename) then
+		notify("could not resolve; filenames must contain only a..z,0..9,_-.")
+		return
+	end
+
+	-- overwrite
+	if intention == "save_file_as" then
+		if fstat(fullpath(intention_text:get_text()[1])) then
+			--notify("exists!")
+
+			push_intention(
+				"confirm_file_overwrite", 
+				env().intention and env().parent_pid, 
+				env().intention and env().intention_filename
+			)
+			full_rebuild()
+			return
+		end
+	end
+
+	-- confirmed confirm_file_overwrite: process save_file_as
+	-- (i.e. send confirmation back to tool with the save_as messge ~ caller doesn't need to know if overwriting or not)
+	if (intention == "confirm_file_overwrite") then
+		intention = "save_file_as"
+	end
+
+	-- 0.2.0h can navigate to a folder via the intention box
+	-- assumes: never choosing a folder (later: special chooser for that, but maybe never need)
+	
+	if fstat(filename) == "folder" then
+		openPath(filename)
+		full_rebuild()
+		return
+	end
+	
+	-- printh("process intention: "..pod{intention,filename})
+	
+	-- new_file is processed by open.lua
+	-- ** never processed by requester **
+	
+	if (intention == "new_file" or intention == "new_tab") then
+		if (not filename:ext() and env().use_ext) filename..="."..env().use_ext
+		--force creation of file, even if default app doesnt exist
+		store(filename,"")
+		create_process(env().open_with and env().open_with or "/system/util/open.lua",
+			{
+				argv={filename},
+			})
+		pop_intention()
+		full_rebuild()
+		return
+	end
+	
+	-- new_folder always internal
+	if (intention == "new_folder") then
+		mkdir(filename)
+		full_rebuild()
+		pop_intention()
+		return
+	end
+
+	if (intention == "new_cartridge") then
+		if (not filename:ext()) filename..=".p64"
+		cp("/system/misc/new_cart.p64", filename)
+		create_process("/system/misc/confirm.p64", 
+						{prompt = "Discard Unsaved Changes?", title = "Load", 
+						cart_to_load = filename,
+						window_attribs = {workspace="current", autoclose=true}})
+		pop_intention()
+		full_rebuild()
+		return
+	end
+
+	if (intention == "rename") then
+		-- printh("rename: "..intention_filename.." to: "..filename)
+		if (fstat(filename)) then
+			notify("can not rename to an existing file")
+		else
+			if (not filename:ext() and intention_filename:ext()) then
+				filename..="."..intention_filename:ext()
+			end
+			local res = mv(intention_filename, filename)
+			if (res) then
+				notify("error: "..res)
+			elseif (mode == "desktop") then
+				copy_desktop_item_attributes(intention_filename:basename(), filename:basename())
+			end
+		end
+
+		pop_intention()
+		full_rebuild()
+		return
+	end
+	
+	-- intention came from external requester
+	-- e.g. save, save as
+	
+	if (intention_requester_proc_id) then
+		-- printh("sending intention to: "..intention_requester_proc_id)
+
+		-- 1. filenav has the power to greenlight R/W access to a file after user has intentionally selected i
+		send_message(intention_requester_proc_id, {event="extend_fileview", filename=filename})
+
+		-- 2. tell the requester
+		send_message(intention_requester_proc_id, -- env().parent_pid, 
+			{event=intention, filename=filename})
+
+		exit() -- to do: is this always correct? should observe window_attribs.autoclose the way that open_with does?
+		return
+	end
+end
+
+function pop_intention()
+
+	-- when filenav was created to process a single intention, always close after it was processes
+	-- e.g. new cart / rename from desktop
+	if (env().intention == intention and env().window_attribs and env().window_attribs.autoclose) exit()
+
+	local item=deli(intentionList) or {}
+	init_intention(item[1],item[2],item[3])
+	
+	rebuildGUI=true
+	buildIntention=false
+	
+	return item -- never used
+end
+:: interact.lua
+--[[pod_format="raw",created="2025-10-29 20:51:43",modified="2025-11-24 19:35:32",revision=425]]
+function openFile(index,cartIsFolder)
+	if (cartIsFolder==nil) cartIsFolder=false
+	local path=index
+	if (type(index)!="string") then
+		path=items[index].path
+	end
+	local path,action,argv=truePathOf(path)
+	if (path) then
+		if (intention == "save_file_as" or intention == "select_file" or intention == "confirm_file_overwrite") then
+			-- filename in text field should already be set
+			process_intention()
+		else
+			if (isFolder(path,cartIsFolder)) openPath(path) return
+			if (isPicotronCart(path)) create_process(path) return
+			-- open by file extension
+			create_process(env().open_with and env().open_with or "/system/util/open.lua",
+				{
+					argv = {path},
+					fileview = {{path,mode="RW"}}, -- grant permission to access it (in case opening program is sandboxed)
+				}
+			)
+			
+			-- 0.2.0h: close filenav after "Open" from wrangler (open_with)
+			if (env().window_attribs and env().window_attribs.autoclose) exit() -- more particular meaning; same result in practice though.
+		end
+	else
+		notify("Failed to open (recursive .loc?)")
+	end
+end
+
+
+lastHover={}
+--stringed together from /system/lib/gui.lua to be more optimised
+function interactAt(gui,x, y)
+	-- check if cursor is inside the bounds of the gui, cancelling interaction if not
+	local gx,gy=gui.x or 0, gui.y or 0
+	local gw,gh=gui.width or windowData.width,gui.height or windowData.height
+	if (x<gx or x>=gx+gw or y<gy or y>=gy+gh) then
+		lastHover[gui] = nil
+		return
+	end
+	
+	local el = gui:el_at_xy(x, y)
+	
+	local newElm=false
+	if (lastHover[gui] != el) then
+		gui.pointer_element = el
+		lastHover[gui]=el
+		newElm=true
+	end
+	local el2 = el
+	while el2 do
+		if (el2.hidden) el = nil
+		el2 = el2.parent
+	end
+	if (not el) then
+		lastHover[gui]=nil
+		return
+	end
+	--drag
+	local dx, dy = start_mx - x, start_my - y
+	local msg = { mx = x - (el.sx or 0), my = y - (el.sy or 0) }
+	
+	-- start drag on mousedown
+	if last_mb == 0 and mb > 0 then
+		start_mx, start_my = x, y
+		start_el = el
+		drag_t = time()
+		dragging_el = el
+	end
+	
+	-- send drag event while held
+	if dragging_el and mb > 0 then
+		local dmsg = {
+			event = "drag",
+			mx = x - dragging_el.sx,
+			my = y - dragging_el.sy,
+			mx0 = start_mx - dragging_el.sx,
+			my0 = start_my - dragging_el.sy,
+			dx = curs.lastx - x,
+			dy = curs.lasty - y
+		}
+		dragging_el:event(dmsg)
+	end
+	
+	-- stop drag on release
+	if dragging_el and mb == 0 then
+		local msg={event="release"}
+		dragging_el:event(msg)
+		dragging_el = nil
+	end
+	
+	if (last_mb!=mb and el) then
+		local dx, dy = start_mx - x, start_my - y
+		local msg = { mx = x - (el.sx or 0), my = y - (el.sy or 0) }
+--		--hover
+--		msg.event="hover"
+--		el:event(msg)
+		-- tap
+--		printh("")
+--		printh(not key("ctrl"))
+--		printh(not key("shift"))
+--		printh(mb==0x1)
+--		printh(last_mb==0)
+--		if ((not key("ctrl")) and (not key("shift")) and mb==0x1 and last_mb==0) then
+--			deselectAll()
+--			reFileRenderNeeded=true
+--		end
+		if last_mb > 0 and mb == 0 then
+			if dx*dx + dy*dy < 4*4 and time() < drag_t + 0.3 and t() > el.t0 + 0.2 then
+				msg.event = "tap"
+				deselect=true
+				msg.last_mb = last_mb
+				el:event(msg)
+				tap0_mx = x
+				tap0_my = y
+			end
+		end
+		
+		-- double click & single click
+		if last_mb == 0 and mb > 0 then
+			if el.last_click_t and time() - el.last_click_t < 0.4 and mb == el.last_click_mb then
+				msg.event = "doubleclick"
+				el:event(msg)
+				el.last_click_t = 0
+			else
+				el.last_click_t = time()
+				el.last_click_mb = mb
+				
+				start_mx, start_my, start_el, drag_t, dragging_el = x, y, el, time(), el
+				el.head.keyboard_focus_el = nil
+				
+				msg.event = "click"
+				el:event(msg)
+			end
+		end
+	end
+	
+	if (newElm) then --do not do anything if the object hovering isnt different
+		-- update cursor, custom
+		
+		wantedCursor = (el and el.cursor) or false
+	end
+end
+
+on_event("drop_items",function(msg)
+
+--	printh("@@ dropped items from proc_id:"..msg.from_proc_id.." // mode:"..mode)
+--	printh("  // msg.mx,msg.my: "..pod{msg.mx,msg.my})
+
+	-- drop into self
+	if (msg.from_proc_id == pid()) then
+		pushSelectedToFront()
+		return
+	end
+	
+	-- drop from somewhere else
+	-- .. make sure not going to overwrite something first
+	if (not msg.shift) then
+		local res = check_for_overwrites(msg)
+		if res then
+			notify("** can not overwrite "..res.." ** (hold shift to force)")
+			return
+		end
+	end
+	
+	--printh("@@ drop from a different process:"..pod(msg))
+	
+	local found_copy_op = false
+	local found_cut_op = false
+	local err = nil
+	local num_ok = 0
+	
+	for i=1,#msg.items do
+		local item = msg.items[i]
+		if (item.pod_type == "file_reference") then
+			-- MOVE
+			--printh(pod(item))
+			-- printh("@@ moving "..tostring(item.fullpath).." to "..pwd())
+			
+			-- to do: define which attributes are requied for a well formed file_reference item
+			-- shouldn't ever need .filename
+			-- avoid introducing optional attributes / hints -- easy for another author to expect to exist on receiving end
+
+			-- allowed to overwrite existing files in this case
+
+			local res = nil
+			--cut == copy but different print (later down) & strips an id
+			if (item.op == "copy") then
+				res = cp(item.fullpath, pwd().."/"..item.fullpath:basename())
+				found_copy_op = true
+			elseif (item.op=="cut") then
+				local endpoint=item.fullpath:basename()
+				endpoint=endpoint:sub(1,#endpoint-#item.id) --strip its id
+				res=cp(item.fullpath, pwd().."/"..endpoint)
+				found_cut_op = true
+			else --move/drag and drop
+				res=mv(item.fullpath, pwd().."/"..item.fullpath:basename())
+			end
+
+			if res then
+				err = tostring(res)
+			end
+
+		end
+	end
+
+	local total_str = #msg.items
+	if (num_ok < #msg.items) total_str = num_ok.." / "..(#msg.items)
+	local err_str = err and ("// "..err) or ""
+
+
+	if (found_copy_op) then
+		notify("copied "..#msg.items.." items "..err_str)
+	elseif (found_cut_op) then
+		notify("pasted "..#msg.items.." cut items "..err_str)
+	else
+		notify("moved "..#msg.items.." items "..err_str)
+	end
+
+	full_rebuild()
+	pushSelectedToFront()
+end)
+:: items.lua
+--[[pod_format="raw",created="2025-10-29 06:03:52",modified="2025-11-24 19:35:28",revision=393]]
+selectedItems={}
+lastSelectedIndex=-1
+
+items={}
+fileListProcess={
+	list={},
+	parent=""
+}
+
+function addItem(path)
+	local folder=false
+	local path=path or "/"
+	if (isFolder(path)) path=path.."/" folder=true
+--		notify(path.." "..pod(fetch(path)))
+	local data=fetch(path)
+	local meta=fetch_metadata(path) --would do data, meta=fetch(path)  but isn't working?
+	if (meta==nil) meta={}
+	local obj={
+		path=fullpath(path),
+		icon=iconOf(path,meta),
+		title=getTitle(path,meta),
+		notes=meta.notes or "",
+		author=meta.version or "",
+		version=meta.version or "",
+		modified=meta.modified or ""
+	}
+	if (theming.displaymode=="p8") obj.title=swapCase(obj.title)
+	add(items,obj)
+	reFileRenderNeeded=true
+	fixMaxScrollY()
+	upd_guiItems()
+end
+
+function loadItems()
+	items={}
+	fileListProcess.list=ls()
+	fileListProcess.parent=pwd()
+	--order in folders > files
+	--	no longer processed! done in updItems() over time
+--	for i=1, #list do
+--		local folder=false
+--		local path=currentPath..list[i]
+--		if (isFolder(path)) path=path.."/" folder=true
+--		local meta=fetch_metadata(path) or {}
+--		local obj={
+--			path=path,
+--			icon=get_spr(256),
+--			defaultIcon=true,
+--			title=filenameOf(path),
+--			notes="",
+--			author="",
+--			version="",
+--			modified="",
+--			precalculated={ --for optimisations!
+--				titleWidth=#filenameOf(path)*fontWidth
+--			}
+--		}
+--		if (theming.displaymode=="p8") obj.title=swapCase(obj.title)
+--		add(items,obj)
+--	end
+end
+
+function upd_items()
+	while (#fileListProcess.list>0 and stat(1)<options.itemLoadThreshold) do
+		--don't fetch instantly, fetch over time
+		addItem(fileListProcess.parent.."/"..fileListProcess.list[1])
+		deli(fileListProcess.list,1)
+	end
+end
+
+function forceSelectItem(index,record)
+	deselect=false
+	if (record==nil) record=true
+	if (selectedItems[index]) then
+		selectedItems[index]=nil
+	else
+		selectedItems[index]=true
+		if (record) then
+			lastSelectedIndex=index
+		end
+	end
+	--fix overlap and burying
+	for i=1, #fileObjects do
+		if (fileObjects[i].textbox.itemIndex==index) then
+			fileObjects[i].textbox:bring_to_front()
+		end
+	end
+	if (options.clickingFileShowsPath) pathBox:set_text(fullpath(items[index].path))
+	if (intention_text) intention_text:set_text(items[index].path:basename())
+end
+
+function deselectAll()
+	selectedItems={}
+end
+
+function selectItem(index)
+	if (key("ctrl")) then
+		forceSelectItem(index)
+	elseif (key("shift")) then
+		local start=lastSelectedIndex
+		if (start==-1) then
+			forceSelectItem(index)
+		else
+			selectedItems={}
+			local first=min(start,index)
+			local last=max(start,index)
+			for i=first,last do
+				forceSelectItem(i,false)
+			end
+		end
+	else
+		selectedItems={}
+		forceSelectItem(index)
+	end
+	reFileRenderNeeded=true
+end
+
+function itemInfo(index)
+	return items[index]
+end
+:: keybinds.lua
+--[[pod_format="raw",created="2025-11-20 21:42:19",modified="2025-11-23 03:08:25",revision=27]]
+function keybinds()
+	if (key("ctrl")) then
+		if (key("a")) then
+			selectedItems={}
+			for i=1, #items do
+				selectedItems[i]=true
+			end
+			buildIntention=intention
+			rebuildGUI=true
+		end
+		if (key("x")) then
+			cut_selected_files()
+		end
+		if (key("c")) then
+			copy_selected_files()
+		end
+	end
+	if (key("del")) then
+		delete_selected_files()
+	end
+end
+:: lua.lua
+--[[pod_format="raw",created="2025-11-23 04:49:07",modified="2025-11-23 04:49:07",revision=0]]
+
+:: main.lua
+--[[pod_format="raw",created="2025-10-29 05:38:48",modified="2025-12-14 18:14:47",revision=818]]
+version="1.0"
+
+lastLSCache=""
+include "helper.lua"
+include "settings.lua"
+
+poke(0x4000, get(fetch"/system/fonts/lil_mono.font")) -- mono font
+
+--set this up everywhere, instead of just checking displaymode for font properties
+fontWidth=5
+fontHeight=10
+
+windowData={
+	width=280,height=160,
+	x=0,y=0
+}
+
+if (theming.displaymode=="p8") fontWidth=4 fontHeight=5
+
+startPath="/"
+settingsLocation=fullpath("embed/settings.lua")
+unpackCartLocation=fullpath("utils/unpack.lua")
+readmeLocation=fullpath("readme.txt")
+zepsFilenavLocation=fullpath("/system/zep/filenav.p64")
+
+include "debug.lua" --i hate you
+include "auto.lua" --fully zep
+include "search.lua"
+include "nav.lua"
+include "functs.lua"
+include "icon.lua"
+include "files.lua"
+include "fileActions.lua"
+include "interact.lua"
+include "gui.lua"
+include "items.lua"
+include "render.lua"
+include "context.lua"
+include "intention.lua"
+include "keybinds.lua"
+include "drag.lua"
+include "env.lua"
+
+window{
+	x=x,y=y,
+	width=windowData.width,height=windowData.height,
+	title=startPath
+}
+curs={}
+
+function _init()
+	openPath(startPath,false)
+end
+
+--globals for gui fuckery
+start_mx,start_my,start_el=0,0,nil
+drag_t=0
+dragging_el=nil
+tap0_mx,tap0_my=0,0
+last_mb=0
+mb=0
+wantedCursor=1
+cursorOverItem=false
+deselect=true
+
+local last_poll_t = 0
+
+function _update()
+	windowData.width,windowData.height=get_display():attribs()
+	local lastx,lasty,lastb=curs.x,curs.y,curs.b
+	curs.lastx,curs.lasty,curs.lastb=lastx,lasty,lastb
+	curs.x, curs.y, curs.b, curs.wheelx, curs.wheely = mouse()
+	mb=curs.b
+	local ogScroll=scrollY
+	scrollY=mid(0,scrollY-curs.wheely*16,maxScrollY)
+	if (ogScroll!=scrollY) upd_guiItems() --make it check that it actually needs update first
+	upd_items()
+	--only update on change
+	if (curs.x!=lastx or curs.y!=lasty or curs.b!=lastb) then
+		interactAt(gui,curs.x,curs.y)
+		interactAt(filesGui,curs.x,curs.y)
+		if (wantedCursor!=1) then
+			window{cursor=wantedCursor}
+		end
+	end
+	-- *this must stay active constantly*
+	--find a new way to do it, bugs it out
+--	if gui.keyboard_focus_el and gui.keyboard_focus_el.update then
+--		gui.keyboard_focus_el:update()
+--	end
+	gui:update_all() --textbox and other stuff, does not include file items now!
+--	filesGui:update_all() --does not include sizing as it used to
+	
+	last_mb=mb
+	if (mb==2) window{has_context_menu=true}
+	if (mb==0x1 or mb==0x2) then
+		update_context_menu()
+	end
+	updSearch()
+	
+	if (not gui.keyboard_focus_el) keybinds()
+	if (deselect) deselectAll() reFileRenderNeeded=true deselect=false
+	if (reFileRenderNeeded) then
+		renderFiles()
+	elseif (rebuildGUI or (windowData.width != fileRender:width() or windowData.height != fileRender:height())) then
+		buildGUI(intention!=nil)
+		buildIntention=nil
+		rebuildGUI=nil
+	end
+	
+	local refresh_freq = (items and #items < 256) and 1 or 5 -- many files: don't want to refresh frequently
+	if ((peek(0x547f) & 0x1) > 0 and time() > last_poll_t + refresh_freq) then
+		if (pod(ls(pwd()))!=lastLSCache) then
+			--changes made
+			openPath(pwd())
+		end
+		last_poll_t = time()
+	end
+	if (options.lowPerformanceMode) flip()
+end
+
+function _draw()
+	render()
+	if (options.displayDebug) then --cpu usage to 2 d.p
+		local x,y=0,16
+		rectfill(x,y,x+40,y+10,0)
+		print(flr(stat(1)*10000)/100 .."%",x+1,y+1,7)
+	end
+end
+
+on_event("move", function(msg)
+	windowData.x=msg.x
+	windowData.y=msg.y
+end)
+
+on_event("filenav_refresh", function()
+	openPath(pwd())
+end)
+:: nav.lua
+--[[pod_format="raw",created="2025-10-29 19:09:22",modified="2025-11-23 04:48:54",revision=420]]
+function openParentFolder(path)
+	if (fstat("..") == "file") then
+		cd("../..")
+	else
+		cd("..")
+	end
+	full_rebuild()
+	window{title=pwd()}
+	return
+end
+
+function openPath(path,clearIntention)
+	path=fullpath(path)
+	local typ=fstat(path)
+	if (typ==nil) path=pwd()
+	cd(path)
+	full_rebuild(clearIntention)
+	lastLSCache=pod(ls(pwd()))
+end
+:: patch/main.lua
+--[[pod_format="raw",created="2025-11-24 20:20:33",galaktisk=true,modified="2025-12-14 18:15:29",revision=14]]
+--env()!!
+
+--[[
+not working:
+	select_file
+	desktop (unsure if will ever be supported)
+]]--
+
+_env=env()
+if (_env.sandbox=="bbs") then
+	notify("This doesn't run correctly when sandboxed - going to zeps")
+end
+--failsafe to go to zep's filenav for anything unsupported
+--zep arg to just always go to zeps
+if (not (
+(_env.argv and _env.argv[1]=="-desktop")
+or (_env.argv and _env.argv[1]=="zep")
+or (_env.zep)
+or (_env.sandbox=="bbs")
+--or true
+)) then
+	_env.corun_program=nil
+	create_process("/system/galaktisk/apps/filenav.p64",_env)
+else
+	_env.corun_program=nil
+	create_process("/system/zep/apps/filenav.p64",_env)
+	exit()
+end
+:: patch/runpatch.lua
+--[[pod_format="raw",created="2025-11-24 20:22:11",modified="2025-11-24 20:31:06",revision=9]]
+cp("/appdata/galaktiskFilenav/filenav.p64/patch/main.lua","/system/apps/filenav.p64/main.lua")
+exit()
+:: readme.txt
+--[[pod_format="raw",created="2025-11-22 19:46:54",modified="2025-11-24 22:00:49",revision=44]]
+
+# README
+Credits to @zep for small parts of the code that was converted and optimised for this project.
+(to allow compatibility)
+
+## Notes
+Indev 1-4 is actually 0.1 - 0.4, naming conventions where changed for cleanliness during indev
+
+# Versions
+## Indev 1
+Added: Selecting files (including using ctrl+shift)
+Added: Viewing files (non meta icons are low color)
+Added: Selecting filepaths (using text box at top)
+
+Runs ~8% cpu (picotron's default is 2-3%) needs optimisation :CC - though, wouldn't be too much of an issue for most users
+
+## Indev 2:
+Added: the ability to open files and folders, including .loc
+Added: anti-loop prevention with .loc files (so .locs that lead to itself don't repeat infinitely and crash)
+Added: open parent folder button (../)
+Added: open ram cart folder button (/ram/cart)
+Added: open root button (/)
+Added: p8 display mode to theming options [RESOURCE INTENSIVE]:
+		Sets sprites to be 8x8 (using sspr)
+		Averages ~18% cpu idle, 24% with cursor on screen (what??) and 100+% resizing/opening folders
+		You have to set this within main.lua:18 (it's not yet stored as a settings.pod sort of thing)
+
+Runs ~8% cpu still
+
+## Indev 3:
+Added: MAJOR optimisations
+	Made icons pre-rendered instead of memmapping constantly (full color mode)
+	:update_all() never called anymore - realise as of writing this that i never setup the textbox at the top to function so that's defunct right now & is replaced with my own system (still gui library) to only update what's needed and do it more efficiently.
+
+Runs:
+idle: 2% CPU
+cursor moves/clicks: 4% CPU (8% for p8)
+open folder: depends on size of folder, still needs optimisations!
+
+## Indev 4:
+Added: Optimisations for file loading to be fully over time (except ls, since that's a system function)
+		 Main lag from opening folders is now picotron itself (the ls function) :(
+Fixed: the path textbox input failing (indev3 broke it)
+Added: settings variable in the lua (needs to be moved to a pod so you can use it without editing code, just leaving until more ready)
+Added: itemLoadThreshold setting - cpu threshold (0-1), items load as fast as they can but attempt to stay under this cpu threshold (default 0.5)
+
+## Indev 5:
+
+Added: Search system with properties:
+	query, [done]
+	ext, [done]
+	extLength=int [done] (automatic for user)
+	depth=int [done] (how deep it will go in folders to search, inacessible to user as of now)
+	includeShortcuts [done] (whether it includes where .loc files lead to)
+	includeCartridges [done] (whether it searches files inside cartridges)
+	includeRAM [done] (/ram/ folder)
+	searchFileContents [not done]
+	searchBinFolders [done] (whether to search .bin)
+
+Added: icon for filenav!
+Fixed: .loc issue where if they lead to a non existent location, they crash
+
+Changed: Generalised .loc and pathstuffs into one simple function to help the general code be clean
+
+## Indev 6:
+
+Added: setting pods stored in /appdata/galaktiskFilenav/ (theming & options)
+Added: lowPerformanceMode options that keeps CPU to 1-2% constantly from what I've tested (not tested p8 mode) at the cost of seemingly just searches being slower.
+Added: starts of context menu with:
+	anywhen
+	show cart contents (within galaktisk filenav)
+	in a new window (within a new window, currently using zep's filenav, will move when my filenav gets intention support)
+	open in terminal
+	More work on context menu will be done soon, only stopping due to time constraints
+
+## Indev 7:
+Added: unpacking cartridges (context menu)
+Added: new file context options, intention menu
+Added: external folder changes update automatically
+Added: CTRL+A to select all files
+Added: dragging files
+Added: context menu option to open the current location in zep's filenav 
+Added: changelog.txt
+Added: settings menu (no theming)
+Added: context menu option for settings
+Added: context menu option for opening changelog
+
+Fixed: issues with the textbox not working right
+Fixed: protocol://path/ is treated as the root, instead of protocol:// (seen in bbs://)
+Fixed: file paths are being seen as /(filepath) instead of (filepath), e.g: //file.txt
+
+Changed: Moved all path stuff from a weird system that can cause bugs into using cd(), pwd(), fullpath() etc
+
+## Release
+Added: delete keybind to delete files
+Added: copy, cut & rename
+Added: context menu options for copy, cut & rename
+Added: context menu option for paste
+Added: keybinds for copy & cut
+Added: conversions between each p64 format
+Added: compiling a folder into a p64
+Added: clearing workspace meta context button
+Added: setting (pod only) for hiding extra cartridge options
+		 (conversions and workspace meta)
+Added: replaces default filenav, storing default in /ram/systemApps/filenav.p64
+Added: Zep's Filenav now feeds the env of the current filenav for env() issues
+Added: env for:
+	zep (custom thing that makes the filenav default to zep's filenav)
+	path & argv for starting path
+	-desktop opens zep's filenav
+	sandbox opens zep's filenav
+Theoretically added full intention support.
+	Keyword theoretically.
+Added: automatically installs, works for both persistent and non persistent systems *with* version control
+
+Fixed: overwrite protection actually works now
+Fixed: refresh_freq is fixed, was using nil variables (from zep's filenav) - now refreshes files at proper rate
+Fixed: bugs with clicking items when you grouped them sometimes unselecting
+:: render.lua
+--[[pod_format="raw",created="2025-10-29 18:11:44",modified="2025-11-01 01:54:53",revision=129]]
+fileRender=userdata("u8",windowData.width,windowData.height)
+reFileRenderNeeded=false
+
+function renderFiles()
+	if (fileRender:width()!=windowData.width or fileRender:height()!=windowData.height) then
+		fileRender=userdata("u8",windowData.width,windowData.height)
+	end
+	set_draw_target(fileRender)
+	cls(theming.main.background)
+	filesGui:draw_all()
+	set_draw_target()
+	reFileRenderNeeded=false
+end
+
+function render()
+	cls(theming.main.background)
+	
+	if (fileRender) then
+		fileRender:blit(get_draw_target(),0,0,0,0)
+	end
+	gui:draw_all()
+end
+:: search.lua
+--[[pod_format="raw",created="2025-11-01 02:03:53",modified="2025-11-20 21:38:39",revision=68]]
+--[[
+	rootpath = where to start the search
+	
+	minimum one property
+	properties={
+		query,              [done]
+		ext,                [done]
+		extLength=int       [done]
+		depth=int           [done] (how deep it will go in folders to search)
+		includeShortcuts    [done] (whether it includes where .loc files lead to)
+		includeCartridges   [done] (whether it searches files *inside* cartridges)
+		includeRAM          [done] (/ram/ folder)
+		searchFileContents  [not done]
+		searchBinFolders    [done] (whether to search .bin)
+	}
+]]--
+
+searchWindowPath=fullpath("searchWindow.lua")
+
+local toSearch={}
+local searched={}
+local searchProperties={}
+searching=false
+
+--windows that can send search message to this window to search stuff
+local searchPID=-1
+
+function createSearchWindow()
+	if (searchPID>0) then
+		send_message(searchPID,{event="kill"})
+	end
+	searchPID=create_process(searchWindowPath,{parent=pid(),x=curs.x+windowData.x,y=curs.y+windowData.y+10,theming=theming,path=pwd()})
+end
+
+function addPathToSearch(path,depth)
+	local includeShortcuts=searchProperties.includeShortcuts
+	if (includeShortcuts==nil) includeShortcuts=true
+	local includeBinFolders=searchProperties.includeBinFolders
+	if (includeBinFolders==nil) includeBinFolders=false
+	local includeRAM=searchProperties.includeRAM
+	if (includeRAM==nil) includeRAM=false
+	if (not includeBinFolders) then
+		if (pathSegmentsHaveSuffix(path, ".bin")) return
+	end
+	if (not includeRAM) then
+		if (pathSegmentsHaveSuffix(path, "ram")) return
+	end
+	if (includeShortcuts) then
+		path=truePathOf(path)
+		if (path==nil) return
+	end
+	if (searched[path]) return
+	searched[path]=true
+	local list=ls(path)
+	for i=1, #list do
+		local continue=true
+		local lpath=joinPath(path,list[i])
+		if (includeShortcuts) then
+			lpath=truePathOf(lpath)
+			if (lpath==nil) goto continue
+		elseif (extensionOf(lpath,1)=="loc") then
+			goto continue
+		end
+		add(toSearch,{path=lpath,depth=depth})
+		::continue::
+	end
+end
+
+function search(rootpath,properties)
+	if (rootPath!=nil) return
+	local fail=true
+	for a,b in pairs(properties) do --ensure properties are given
+		fail=false
+		break
+	end
+	if (fail) return
+	deselectAll()
+	--cancel any loading of files
+	fileListProcess={
+		list={},
+		parent=""
+	}
+	items={}
+	cd(rootpath)
+	pathBox:set_text(pwd())
+	upd_guiItems()
+	
+	toSearch={}
+	searched={}
+	addPathToSearch(rootpath,0)
+	searchProperties=properties
+end
+
+function searchMatches(path,properties)
+	--extension check
+	if (properties.ext) then
+		local extLength=properties.extLength or 2
+		local ext=extensionOf(path,extLength)
+		if (ext!=properties.ext) return false
+	end
+	--name query
+	if (properties.query) then
+		local query=string.lower(properties.query)
+		local fn=filenameOf(path)
+		if (fn==nil) return false --root path only?
+		local lowercasefn=string.lower(fn)
+		if (not lowercasefn:find(query,1,true)) then
+			return false
+		end
+	end
+	return true
+end
+
+
+function updSearch()
+	while (#toSearch>0 and stat(1)<options.searchThreshold) do
+		local path=toSearch[1].path
+		local depth=toSearch[1].depth
+		local searchDepth=searchProperties.depth or 1000
+		local includeCartridges=searchProperties.includeCartridges
+		if (includeCartridges==nil) includeCartridges=false
+		if (searchMatches(path,searchProperties)) then
+			addItem(path)
+		end
+		if (isFolder(path,includeCartridges)) then
+			if (searchDepth>depth) then
+				addPathToSearch(path,depth+1)
+			end
+		end
+		deli(toSearch,1)
+	end
+	searching=#toSearch>0
+end
+
+on_event("search",function(msg)
+	if (msg._from!=searchPID) return --only created search window can search
+	search(msg.path,msg.properties)
+end)
+:: searchWindow.lua
+--[[pod_format="raw",created="2025-11-01 02:16:52",modified="2025-11-24 18:26:03",revision=224]]
+poke(0x4000, get(fetch"/system/fonts/lil_mono.font")) -- mono font
+
+_env=env()
+parent=_env.parent
+x=_env.x or 0
+y=_env.y or 0
+theming=_env.theming
+cd(_env.path)
+
+local width=150
+local height=70
+window{
+	title="Search "..pwd(),
+	width=width,
+	height=height,
+	x=x,
+	y=y,
+	resizeable=false
+}
+
+function getStrValue(obj)
+	local txt=obj:get_text()[1]
+	if (#txt>0) return txt
+	return nil
+end
+
+function getBoolValue(obj)
+	
+end
+
+function search()
+	local obj={
+		query=getStrValue(query),
+		ext=getStrValue(ext),
+		includeShortcuts=getBoolValue(shortcuts),
+		includeCartridges=getBoolValue(cartridges),
+		includeRAM=getBoolValue(ram),
+		includeBIN=getBoolValue(bin),
+	}
+	if (obj.ext) then
+		local txt=ext:get_text()[1]
+		if (txt:sub(1,1)==".") txt=txt:sub(2,#txt)
+		obj.extLength=select(2, txt:gsub("%.", ""))+1
+	end
+	send_message(parent,{event="search",path=pwd(),properties=obj})
+	exit()
+end
+
+local labels={}
+
+function textbox(label,x,y)
+	add(labels,{label=label,x=x+2,y=y+2})
+	return {
+		x=x+4+#label*5,y=y+1,
+		width=width-6-#label*5-x,height=12,
+		key_callback={
+			enter=function() search() end
+		}
+	}
+end
+
+function toggle(label,x,y,default)
+	if (default==nil) default=true
+	add(labels,{label=label,x=x+2,y=y+2})
+	return {
+		x=x+#label*5+5,y=y+3,
+		width=6,height=6,
+		active=default,
+		cursor="pointer",
+		tap=function(self)
+			self.active=not self.active
+		end,
+		draw=function(self)
+			if (self.active) then
+				rectfill(0,0,self.width-1,self.height-1,6)
+			end
+			rect(0,0,self.width-1,self.height-1,7)
+		end
+	}
+end
+
+function _init()
+	gui=create_gui{}
+	local x,y=0,0
+	query=gui:attach_text_editor(textbox("Query",x,y))
+	y+=13
+	ext=gui:attach_text_editor(textbox("Extension",x,y))
+	y+=13
+	shortcuts=gui:attach(toggle("Include .loc locations",x,y,true))
+	y+=8
+	cartridges=gui:attach(toggle("Search cartridge contents",x,y,false))
+	y+=8
+	ram=gui:attach(toggle("Include RAM",x,y,false))
+	y+=8
+	bin=gui:attach(toggle("Include .bin folders",x,y,false))
+	
+	gui:attach{
+		x=width-31,y=height-10,
+		width=31,height=10,
+		cursor="pointer",
+		draw=function(self)
+			rectfill(0,0,self.width-1,self.height-1,theming.search.buttonBackground)
+			print("Search",1,1,7)
+		end,
+		tap=function()
+			search()
+		end
+	}
+end
+
+function _update()
+	gui:update_all()
+end
+
+function _draw()
+	cls(theming.main.background)
+	gui:draw_all()
+	for i=1, #labels do
+		print(labels[i].label,labels[i].x,labels[i].y,7)
+	end
+end
+
+on_event("kill",function(msg)
+	if (msg._from!=parent) return --only creator can kill
+	exit()
+end)
+:: settings.lua
+--[[pod_format="raw",created="2025-11-19 22:16:17",modified="2025-11-24 20:39:31",revision=59]]
+appdataPath="/appdata/galaktiskFilenav/"
+mkdir(appdataPath)
+function loadOptions(restore)
+	if (restore==nil) restore=true
+	local defaultOptions={--while under cpu threshold (0-1)
+		itemLoadThreshold=0.1,
+		searchThreshold=0.1,
+		clickingFileShowsPath=true,
+		lowPerformanceMode=true,
+		terminalPath="/system/apps/terminal.lua",
+		fakeDelete=false,
+		displayDebug=false,
+		extraCartridgeOptions=true
+	}
+	options=fetch(appdataPath.."options.pod") or defaultOptions
+	
+	for key,val in pairs(defaultOptions) do
+		if (options[key]==nil) options[key]=options[key] or val
+	end
+	
+	if (restore) store(appdataPath.."options.pod",options)
+end
+
+
+function loadTheming(restore)
+	if (restore==nil) restore=true
+	local defaultTheming={
+		main={
+			background=23,
+			topBar=14
+		},
+		item={
+			background=23,
+			col=1,
+			selectedcol=7,
+			selectedbackground=30
+		},
+		search={
+			buttonBackground=14,
+			buttonText=7
+		},
+		intention={
+			background=14,
+			text=0,
+			textbox={
+				fg=7,
+				bg=1
+			},
+			--[!] get these working
+			buttonBackground=2,
+			buttonBorder=0xe12,
+			buttonText=7
+		},
+		displaymode="default" --p8 displaymode is very laggy!
+	}
+	
+	theming=fetch(appdataPath.."theming.pod") or defaultTheming
+	for key,val in pairs(defaultTheming) do
+		if (theming[key]==nil) theming[key]=theming[key] or val
+	end
+	if (restore) store(appdataPath.."theming.pod",theming)
+end
+
+loadOptions()
+loadTheming()
+
+on_event("updateOptions",function()
+	loadOptions(false)
+end)
+
+on_event("updateTheming",function()
+	loadTheming(false)
+end)
+:: utils/unpack.lua
+--[[pod_format="raw",created="2025-11-20 21:47:06",modified="2025-11-20 22:23:01",revision=32]]
+local _env=env()
+if (not _env.cart) notify("no cart given.") exit()
+if (not _env.unpacklocation) notify("no unpack location given.") exit()
+
+--[[
+add converting gfx, map and sfx in future if wanted & possible?
+]]--
+
+function unpackCartridge(src,path)
+	local filelist=ls(src)
+	mkdir(path)
+	for i=1, #filelist do
+		local loc=src.."/"..filelist[i]
+		local typ=fstat(loc)
+		if (typ=="folder") then
+			local subpath=path..filelist[i].."/"
+			mkdir(subpath)
+			unpackCartridge(loc,subpath)
+		else
+			cp(loc,path..filelist[i])
+		end
+	end
+end
+
+unpackCartridge(_env.cart,_env.unpacklocation)
+--clone metadata
+local meta=fetch_metadata(_env.cart)
+store_metadata(_env.unpacklocation,meta)
+notify("Unpacked to ".._env.unpacklocation.."!")
+exit()
+:: .info.pod
+--[[pod,author="Astralsparv",bbs_id="galaktisk_filenav-11",created="2025-11-19 20:31:48",galaktisk=true,icon=userdata("u8",16,16,"0000000000000000000000000000000000000000000000000000000000000000000000000000c1c1c1c10000000000000000000000c1dedec1c1c1c1000000000000c1c1c1dedec1dedec1c1c1c1000000c1d7d7c1c1c1dedec1dededed7c10000c1d7c1d7d7c1c1c1dededed7d7c10000c1d7c1d7c1d7d7d7d7d7d7d7d7c10000c1d7c1d7c1d7c7c7c7c7c7c7d7c10000c1d7c1d7c1d7c7c7c7c7c7c7d7c10000c1d7c1d7c1d7d7d7d7d7d7d7d7c1000000c1c1d7c1d7d7d7d7d7d7d7d7c10000000000c1c1d7d7d7d7d7d7d7d7c100000000000000c1c1c1c1c1c1c1c100000000000000000000000000000000000000000000000000000000000000000000"),modified="2025-12-14 19:08:39",notes="Galaktisk Distribution Release version.\n/appdata/galaktiskFilenav/",runtime=24,sandbox=false,title="Galaktisk Filenav",version="1.0g",workspaces={{location="main.lua#24",workspace_index=1},{location="helper.lua#13",workspace_index=1},{location="env.lua",workspace_index=1},{location="patch/main.lua#23",workspace_index=1}}]]
+:: embed/.info.pod
+--[[pod,created="2025-11-24 23:32:11",modified="2025-12-14 19:08:39"]]
+:: gfx/.info.pod
+--[[pod,created="2025-11-24 23:32:11",modified="2025-12-14 19:08:39"]]
+:: gfx/0.gfx
+b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTAxLTE3IDEwOjM1OjQ4Iixtb2RpZmllZD0iMjAyNS0x
+MS0yMiAyMDo1NDoxOSIscmV2aXNpb249MTE3XV1sejQApgUAANU8AAD1D3tbMF09e2JtcD1weHUA
+QyAQEATwE0KQEiASgAJAAgQAcRIgEpBi0CICAPMCEvAjLGZsYWdzPTAscGFuX3gIANt5PTAsem9v
+bT0xM30sUwCQNhLAMqBSsBLQAgBfQqBC8DVDAB5lRHJwAlACBAB-cnACQBJwYkkAIDdKEsACAC-w
+OkEAHh-wMgC0AOgBfxcAEoACBzDqATPPCAgEIAdgB2A3APcYOQAdQfARB3ACAB8g_gA9HzgxAMKD
+E0KQAg-CIA66ASAPx8QBEA0FAG4ODRAOApDEAQ_MABcPMQD-RAuyAQAEADAwD8exAS8AHbEB-4lV
+EA-HD8KsARUwcQM-wiANtQErDzEA--------EfMMAJ8VUA53Dw4OQA53HQ4wDnctDiAOdz0OEA63
+BAA0Fy1nCgAtTUcKAAMEAC-eAKkAHf8DCV8VgA4vEi8ODgBuLxI-Dh7dAgABTw4A3gDSADowJz8S
+uwAgNywGACAnPAYAQRcsBwwIACAcdwYAIFw3GgAjTDcxAA-dACHf-xUBHw6XHh8VHpceHQQAARHe
+AgCDLo0eHS4NNz0GAEENAA0eCAAvEN1wABz-DhCvFTAOrxIOEA4HDq0OEB6tDhAOvQ4ADgcOHV4t
+EAAK-wOdHhC_Bw4QHpcNDiAOnQ5AniB7ABzyB-AKTxWQPh8SDgCuLR7dHi13LR4dlx0EAFcXHScd
+BwgAIZcdIAC_TUc9Hk0HDQcNBz3hAQ87AhVxPi8SDgCePSYCkS1XTR4tZz0ebVMAsS0nDSc9Hi0H
+DQd9FgA-PVc9SgJCAAQAYScfEgccNzwCPyccJwgACCInHCgADlICD4sANUMXHxIXiwALCAAB0QJm
+FwwHHAcMEAAPiQBIFC8UARQsCAAAQQQhRywMACkcBwgAD4cAQzA3TxJ1AU83DCcMCAADMgcsJ6EA
+JSwnoQAPiwBDIWcfiwAqF2wWAkkHDAccEgAlbCeCBA_JAEMDJAI0BxxHDQADnwEBDAAKjwEOfwAP
+ewZIHxKwAAcwVx8OlgAXV0cCWAccFwxXCAAlTFccAA_2ACLuAd8VAA7XHge-EgceB70EAP8I1x4X
+jw4nHheMFwwetwwOAA68DiC_8ANnAB3QAq8VQA6HDkAOB28SBwcAH20GAA8BLwD-A18OBwwOQA5n
+DA5QDmwOYH7wBnsAHVAIfxVgHmoHH45oBwcv-gE4ASFYHrcu1x4CAP8DDw63DR7dHh0fEp0uvR4A
+3vABOgcqYwcPElcMBzcHMxdcFwoAD0EHPy-w8DEAf98A-xUB3w4fFQ8OvxIPCAAYADQA-wwfDocu
+HxUehx4PEh8Vvg8SDxUADb8SDRDN8AO4AE4UB28CvB4AXi8STw4uzR7dAgABHQIfAIsATg8xAB1y
+EL8VIB6XHn0EBAQAADUFFR01BUQtBx03DAA0HQctDAAABAD-AQ8OlwwOEA68DhAenB4gvhB9AC1R
+Jx8SFx0XBk8dNx0XCAAIIicdKAAPiQAFD6sCWS8VDwgAGAI0AJYXDl8SDhcOHxUKAEA_XxIutAIf
+vrMCIw8xAK8PHAcPApsCHw7QBxIv3gB-AEtfBxwnHDcIAAglFxynAC-eAI4CU48SHxUPEr8VDwgA
+IBPfBACiDxKnHh8VDpceDYkCHyBFAakPMQD-Eg_xAXgPiwATQwcfDheLAAsIABFcBgAB9A0GEAAP
+iQBIFC8UARQsCAAVd2YROQccBwgAD4cAQyEnTywMTycMJwwIAAMCEgUkBywIAB93iwBGA7cMKgds
+FgIAjwEJEgADIAAfh4kARgmvAg8kBg4PkAN_AcoFD5sNFiAuvHEMHwKZDV2vdx5ADmweUI7wBQ8B
+TnACvxUgDrcOrw4PdQ0EQA4ADr2fDh8CjAAeDzEA---------------------------------zVQ
+bT04fX0=
+:: icons.gfx
+b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTEwLTMwIDAxOjE2OjQwIixtb2RpZmllZD0iMjAyNS0x
+MS0yMiAyMjoyNjozNyIscmV2aXNpb249N11dbHo0AAgFAADvPAAA8xR7WzBdPXtibXA9cHh1AEMg
+EBAE8PAsZmxhZ3M9MCxwYW5feAgA2nk9MCx6b29tPTEzfSwyAPMMAJ8VUA53Dw4OQA53HQ4wDnct
+DiAOdz0OEA63BAA0Fy1nCgAtTUcKAAMEAC-eAHkAHf8E8AlfFYAOLxIvDg4Abi8SPw4e3QIAAU8O
+AN4A1AA7MCc-Er0AIDcsBgAgJzwGAEEXLAcMCAAgHHcGACBcNxoAI0w3MQAP3wAi3-8VAR8Olx4f
+FR6XHh0EAAER3gIAgy6NHh0uDTc9BgBBDQANHggALxDdcQAd-w4QrxUwDq8SDhAOBw6tDhAerQ4Q
+Dr0OAA4HDh1eLRAACv8DnR4QvgcOEB6XDQ4gDp0OQJ4gfAAd8gfwCk8VkD4fEg4Ari0e3R4tdy0e
+HZcdBABXFx0nHQcIACGXHSAAvk1HPR5NBw0HDQc95QEPQAIWcT4vEg4Anj0rApEtV00eLWc9Hm1U
+ALEtJw0nPR4tBw0HfRYAPz1XPU8CQwAEAGEnHxIHHDdBAj8nHCcIAAgiJxwoAA5XAg_MADZDFx8S
+F4wACwgAAdcCZhcMBxwHDBAAD4oASRQvFgEULAgAAEoEIUcsDAApHAcIAA_IAEQwN08SeAFPNwwn
+DAgAAzIHLCeiACUsJ6IAD4wARCFnH4wAKhdsGgJJBwwHHBIAJWwniwQPigBEAygCNAccRw0AA6IB
+AQwACpIBD4AAFQ_JBjQfErIABzBXHw6YABdXTAJYBxwXDFcIACVMVxwAD7gAI_4B3xUADtceB78S
+Bx4HvQQA-wjXHhePDiceF4wXDB63DA4ADrwOIL7wA2gAHtACrxVADocOQA4HbxIHBwAfbQYADwEv
+AP8DXw4HDA5ADmcMDlAObA5gfvAGfAAeUAh-FWAeegcfjngHBy-_ATsBIlgety7XHgIA-wMPDrcN
+Ht0eHR8SnS69HgDe8AFKBytjBw8SVwwHRwczF1wXCgAPUQdAL-DwMgCC3wD-FQHfDh8VDw6-Eg8I
+ABgANAD-DB8Ohy4fFR6HHg8SHxW_DxIPFQANvxINEM3wA7oAUBQHdwK8HgBeLxJPDi7NHt0CAAEk
+Ah8AjQBQDzIAHnIQvxUgHpceiwQEBAAARQUVHUUFRC0HHTcMADQdBy0MAAAEAP8BDw6XDA4QDrwO
+EB6cHiC_EH4ALlEnHxIXHSkGTx03HRcIAAgiJx0oAA_KAAUPswJbLxUPCAAYAjQAlhcOXxIOFw4f
+FQoAQD5fEi68Ah__uwIkDzIAsw8yBw8CowIfDugHEi-eAIAATF8HHCccNwgACCUXHKgAL94AlgJV
+jxIfFQ8SvxUPCAAgE98EAKIPEqceHxUOlx4NkQIfIEgBqw8yAP8YD7gBeQ_MABNDBx8OF4wACwgA
+EVwGAAEcDgYQAA_KAEkULxYBFCwIABV3lRE5BxwHCAAPiABEISdPUAxPJwwnDAgAAwIgBSQHLAgA
+H3eMAEcD3AwqB2waAgCSAQkSAAMgAB_HigBHCbQCDzQGDg_YA4EB2gUPww0WIC68lgwfAsENXq93
+HkAObB5QjvAFEgFQcAK-FSAOtw7aDg_dDQRADgAOvcoOHwKOAB8PMgCw0AgIBBAHEAcgBwAXAAcC
+ABEQBgAADgAfEBQAAE8gBxAHOQsNHzKTAB8PMgD-------------------------------------
+------------K1A9MTN9fQ==
+:: label.qoi
+b64$cW9pZgAAAeAAAAEOBAH-_PDo-P39-f39-f39-f39-f39-eH_gHCYxAT9-f39-f3ALMAEwCzA
+BMcswQTALMEEyyzBBMgsxATG-vhwqMb__PDoySwELATNLMUE-f39-f38LMAEwizABMYswQTALMEE
+xizCBCzBBMgsBMIsBMb__HCoxv748OjKLATSLAQsBP39-f39-CzABMIswATGLMEEwCzBBMYswgQs
+wQTILATCLATG-vhwqMb__PDoxizHBMoswQQswQT9-f39-fwswATCLMAExizGBMYswgTMLATCLATG
+-vhwqMb__PDoxizABMMswATKLAQsBP39-f39-cIswATCLMAExiwELMIELATGLMUEySwEwCzBBNYs
+wATDLMAEyizFBP39-f39-CzABMIswATGLAQswgQsBMYsxQTHLMEEwCzBBMb__HCoxv748OjGLMAE
+wyzABMssxAT9-f39-f0swATALMAExyzGBMYsxQTHLMEEy-74cKjA-vjw6ML__HCowP748OjGLMcE
+-f39-f39-f39-f39-f394-4AAADC-uAIqMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0
+whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTC
+FMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIU
+wjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTC
+NMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whQ0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FDTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTC
+NMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0
+whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTC
+FMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIU
+wjTCFMI0whTCNMIUwzTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwzTCFMI0whTCNMIUwjTCFMI0whTC
+NMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0
+whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTC
+FMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIU
+wjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUNMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBQ0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIU
+wjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTC
+NMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0
+whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTC
+FMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMM0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMM0whTCNMIU
+wjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTC
+NMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0
+whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTC
+FMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIU
+wjTCFDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTC
+FMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIU
+wjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTC
+NMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0
+whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTDNMAU-kAoMP399DQUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBQsyDQU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwiz_
+YECI-f30-kAoMDQUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTC
+NMIUwjTCFMI0whTCLATG-riY2Cw0FMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTC
+FMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFDQs-mBAiP39
+9v5AKDAUNMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFCwExhzALBQ0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFDTALP5gQIj3-hgoUMIswBQswBTALNoUwCzGFCzCFCzCFCz9-kAoMDTC-gAAAMI0
+whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIsBMYc
+wSw0wRTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIU
+wjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMM0LP5gQIjE-kAoMMX_YECI6v4YKFAsxxQs2RQs
+wBQsxRQswhQs_-5AKDDB-mBAiML_QCgw-gAAADTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFP4YKFDHNMD_AAAAwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFCwExhzCLDQUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTBLP5gQIj3-hgoUCzCFMAswRQswRTALMAUwSzB
+FMAswBQswBQsxBQswxTALMAUwiwUwiwUwCzAFMEswRTBLMAUwSzl-kAoMP5gQIjB-kAoMP5gQIjB
+-kAoMP4AAADCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTB-hgoUATHFDTA-gAAAMI0whTCNMIUwjTC
+FMI0whTCNMIUwjTCFMIsBMosFMA0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0
+whTCNMIUwjTCFMI0whTCNMIUwjTB-hgoUM40-gAAAMI0whTCNMIUwjTCFMI0whQ0LP5gQIjE-kAo
+MMX_YECI6v4YKFDBLMEULMEULMAULMAULBQswBQswhQsFCzAFCzFFMAswBQswBQswBQswhQswhQs
+wBQswBQsFCzAFCwULOj_QCgw-mBAiMH_QCgw-mBAiMH_QCgw-gAAADTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDT_GChQBCzA-mBAiMP_QCgwwAQU-gAAAMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBQsBMX_gHCY
+wATB-kAoMDQUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wP4YKFD_KKj4BMAcwP7AwMDBHMAEwv4YKFD_AAAAwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBQ0wCz_YECI9-4YKFAswxQswRQswBTCLBQswBQswBTBLBQswBQsxxQsFMIs
+wBQswhQswhQswBQswBQsFCzAFCzAFMAs5v5AKDD_YECIwf5AKDD_YECIwf5AKDA0wv4AAADCNMIU
+wjTCFMI0whTCNMIUwjTCFMI0-hgoUAQs-vigAP74yKgswzwcLAQUNML_AAAAwjTCFMI0whTCNMIU
+wjTCFMI0whTCNMIsBMD_gHCYxQTB-kAoMDTAFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTC
+NMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwf4YKFAE-iio_AQcwf7AwMDAHMEEwf4YKFD_AAAA
+NMIUwjTCFMI0whTCNMIUwzQs-mBAiMT_QCgwxf5gQIjq-hgoUCzDFCzBFCzAFCzCFCzAFCwULMAU
+LBQsFCzFFCzAFCwULMMULMIULMIULMAULMAULMAUwSzCFCzm-kAoMMH_YECIwv5AKDD_AAAANMAU
+-f39-eA0wBTANMAUwDTAFMEs-mBAiPf_GChQLMIUwSzAFMAswBTBLBQswBQswBTBLBTALMcUwCzB
+FMEswRTALMEUwCwUwSwULMAULMIULBTBLO7_QCgw-gAAAMP__KjA-f39-dwUNMIUwjTCFDQs-mBA
+iP39-hgoUMAs8-5AKDD_AAAANMAUBP39-f3eFDTAFMA0wBTANMAUNMAs-mBAiP399v5AKDA0wRQE
+-f39-d4UwjTCFMM0LP39_BQ0wBQExP5gQIjFBP39wDQE-f3HLMEEwhQ0wBTANMAUwDTAFMH_QCgw
+BP399iwUwgT9-c00BP39xv5gQIgEwSwEwRQ0wRTCNMIUNP5AKDAE-f32LBQ0wBQExP5gQIjFBP39
+NAT9-ccsBMEsBMEUNMAUwDTAFMA0wBQ0wP5AKDAEwv7AwMD9wgT97iw0wf4AAAAE-f3MNAT9-cf_
+YECIBMEsBMEUwjTCFMM0-kAoMATB-sDAwP3EBP3tLP4AAAA0wBQExP5gQIjFBP38NAT9-ckswQTC
+FDTAFMA0wBTANMAUwf5AKDAEwP7AwMD9xgT97Cz_AAAAwgT9-cs0BP390BQ0wRTCNMIUNCwEwP7A
+wMDE-hgoUMD_wMDA1P4YKFDD-sDAwP4YKFD_wMDAzv4YKFD_wMDAzgT97Cz_AAAANMAUBP39-f3e
+FDTAFMA0wBTANMAUNMAsBMD_wMDAw-4YKFD_wMDAwP4YKFD_wMDA1f4YKFD_wMDAwf4YKFD_wMDA
+3wT97Cw0wf4AAAAE-f39-d4UwjTCFMM0LATA-sDAwMP_GChQ-sDAwMD_GChQ-sDAwP4YKFDB-sDA
+wMH_GChQwP7AwMDA-hgoUMH_wMDAx-4YKFD_wMDAwf4YKFDB-sDAwMH_GChQwP7AwMDA-hgoUMD_
+wMDA-hgoUP7AwMDA-hgoUMD_wMDAwP4YKFDB-sDAwMH_GChQwf7AwMDDBP3sLP4AAAA0wBT9-f39
+4DTAFMA0wBTANMAUwSwEwP7AwMDD-hgoUP7AwMDA-hgoUP7AwMD_GChQ-sDAwMD_GChQ-sDAwP4Y
+KFD_wMDAwP4YKFD_wMDA-hgoUP7AwMDA-hgoUP7AwMDG-hgoUP7AwMDB-hgoUP7AwMDA-hgoUP7A
+wMD_GChQ-sDAwMD_GChQ-sDAwP4YKFD_wMDA-hgoUP7AwMD_GChQ-sDAwMD_GChQ-sDAwMD_GChQ
+-sDAwMD_GChQ-sDAwP4YKFD_wMDAwP4YKFD_wMDAwwT97Cz_AAAAwv74cKj9-f393hQ0wRTCNMIU
+NCz__KjAwP7AwMDD-hgoUP7AwMDA-hgoUP7AwMD_GChQ-sDAwMD_GChQ-sDAwP4YKFDC-sDAwP4Y
+KFD_wMDAwP4YKFD_wMDAxv4YKFD_wMDAwf4YKFD_wMDAwP4YKFD_wMDA-hgoUML_wMDA-hgoUP7A
+wMD_GChQ-sDAwP4YKFD_wMDAwP4YKFD_wMDAwP4YKFD_wMDAwP4YKFD_wMDA-hgoUP7AwMDA-hgo
+UP7AwMDDBP3sLP4AAAA0wBT__HCo-f39-d4UNMAUwDTAFMA0wBQ0wCz__KjAwP7AwMDD-hgoUP7A
+wMDA-hgoUP7AwMD_GChQwf7AwMDA-hgoUP7AwMDC-hgoUP7AwMDA-hgoUP7AwMDG-hgoUP7AwMDB
+-hgoUP7AwMDA-hgoUP7AwMD_GChQ-sDAwML_GChQ-sDAwMH_GChQ-sDAwMD_GChQ-sDAwMD_GChQ
+-sDAwMD_GChQ-sDAwMD_GChQwf7AwMDDBP3sLDTB-gAAAP74cKjB-nggUMME1v4YKFD9-f3cBN7_
+AAAAwjTCFMM0LP74qMDA-sDAwMT_GChQwP7AwMDA-hgoUP7AwMDD-hgoUMH_wMDA-hgoUP7AwMDA
+-hgoUP7AwMDG-hgoUP7AwMDB-hgoUP7AwMDA-hgoUP7AwMDA-hgoUMH_wMDA-hgoUP7AwMDB-hgo
+UP7AwMD_GChQwf7AwMD_GChQ-sDAwMD_GChQ-sDAwML_GChQ-sDAwMME-ews-vjw6MA0-gAAAP74
+cKjADMAEwQzABNX_GChQ-f393ATe-gAAADTAFMA0wBTANMAUwSz__KjAwP7AwMDI-hgoUP7AwMDx
+-hgoUMD_wMDAxAT97Cz__PDowf4AAAD__HCowAwEwwwEywzABMb_GChQ-f393ATe-gAAADTBFMI0
+whQ0LP74qMDB-sDAwP3EBP3tLP748OjB-gAAAP74cKjADATDDATKDMIExf4YKFDS-sDAwP4YKFDM
+-sDAwMD_GChQwf7AwMDA-hgoUM3_wMDA-hgoUP7AwMD_GChQzP7AwMD_GChQwP7AwMD_GChQxf7A
+wMDA-hgoUMH_wMDA-hgoUMP_wMDA-hgoUMb_wMDAwP4YKFDU-sDAwP4YKFDA-sDAwP4YKFD_wMDA
+-hgoUMD_wMDA-hgoUMD_wMDAwP4YKFDA-sDAwML_GChQwP7AwMDA-hgoUMD_wMDAwf4YKFDA-sDA
+wP4YKFDC-sDAwML_GChQxP7AwMD_GChQxP7AwMD_GChQ4ATCDMYEzAzABML_AAAANMAUwDTAFMA0
+wBQ0wCz__KjAwv7AwMD9wgT97iz__PDowf4AAAD__HCowAwEwwwEyQzEBMT_GChQxP7AwMD_GChQ
+y-7AwMD_GChQzf7AwMD_GChQwP7AwMD_GChQwP7AwMD_GChQzP7AwMD_GChQ-sDAwP4YKFDM-sDA
+wML_GChQxv7AwMD_GChQwf7AwMD_GChQzf7AwMD_GChQ1P7AwMD_GChQwP7AwMD_GChQ-sDAwMD_
+GChQ-sDAwP4YKFD_wMDA-hgoUMD_wMDA-hgoUMH_wMDA-hgoUMD_wMDA-hgoUMD_wMDA-hgoUP7A
+wMD_GChQwP7AwMD_GChQ-sDAwP4YKFDC-sDAwP4YKFDH-sDAwP4YKFDnBMIMBMQMBMsMwATD-gAA
+AMI0whTDNCz__KjA-f32LP748OjBFP74cKjADMAEwQzABMsMwATG-hgoUMT_wMDA-hgoUMH_wMDA
+wP4YKFDB-sDAwMH_GChQ-sDAwML_GChQ-sDAwP4YKFD_wMDAwP4YKFDA-sDAwMD_GChQwv7AwMD_
+GChQwP7AwMD_GChQw-7AwMDA-hgoUMD_wMDAwf4YKFDB-sDAwMH_GChQ-sDAwMH_GChQwf7AwMDA
+-hgoUMD_wMDA-hgoUMD_wMDA-hgoUP7AwMDC-hgoUP7AwMD_GChQwP7AwMD_GChQwf7AwMD_GChQ
+wP7AwMDC-hgoUMD_wMDAwP4YKFDA-sDAwMH_GChQwv7AwMD_GChQwf7AwMDA-hgoUMD_wMDA-hgo
+UMD_wMDA-hgoUMD_wMDAwP4YKFDA-sDAwP4YKFD_wMDAwP4YKFD_wMDA-hgoUMD_wMDA-hgoUP7A
+wMD_GChQ-sDAwMD_GChQ-sDAwP4YKFDE-sDAwP4YKFDA-sDAwP4YKFDA-sDAwP4YKFD_wMDA-hgo
+UMD_wMDA-hgoUP7AwMD_GChQwv7AwMD_GChQx-7AwMDB-hgoUMH_wMDAwP4YKFDA-sDAwMH_GChQ
+2wTCDATEDATKDMAExP4AAAA0wBTANMAUwDTAFMEs-viowML_wMDA-f3ABPAs-vjw6MH_AAAA-vhw
+qMEMxQTKDMAExv4YKFDD-sDAwP4YKFDE-sDAwP4YKFD_wMDA-hgoUMP_wMDA-hgoUMH_wMDAwP4Y
+KFDE-sDAwP4YKFDB-sDAwP4YKFDB-sDAwMD_GChQw-7AwMD_GChQ-sDAwP4YKFDA-sDAwP4YKFD_
+wMDA-hgoUMD_wMDA-hgoUP7AwMD_GChQwP7AwMD_GChQ-sDAwP4YKFDA-sDAwP4YKFD_wMDA-hgo
+UMD_wMDA-hgoUP7AwMD_GChQwP7AwMD_GChQ-sDAwP4YKFDA-sDAwP4YKFDB-sDAwP4YKFDB-sDA
+wP4YKFDD-sDAwP4YKFDA-sDAwP4YKFDA-sDAwP4YKFDB-sDAwP4YKFDD-sDAwP4YKFD_wMDA-hgo
+UMD_wMDA-hgoUP7AwMD_GChQwP7AwMD_GChQ-sDAwMD_GChQwf7AwMD_GChQwP7AwMD_GChQ-sDA
+wP4YKFDA-sDAwP4YKFDA-sDAwMD_GChQwv7AwMD_GChQwP7AwMDC-hgoUP7AwMDB-hgoUMD_wMDA
+-hgoUML_wMDAwf4YKFDF-sDAwP4YKFDA-sDAwP4YKFDB-sDAwP4YKFDA-sDAwP4YKFDA-sDAwP4Y
+KFDaBMIMBMQMBMkMwATF-gAAADTBFMI0whQ0LP74qMDB-sDAwP39wgTvLP748OjB-gAAAP74cKjG
+DMEEyQzABMb_GChQw-7AwMD_GChQwv7AwMDB-hgoUMD_wMDAwP4YKFDB-sDAwP4YKFDB-sDAwP4Y
+KFDD-sDAwMH_GChQwf7AwMD_GChQw-7AwMD_GChQwP7AwMDB-hgoUP7AwMD_GChQwP7AwMD_GChQ
+-sDAwP4YKFDA-sDAwP4YKFD_wMDA-hgoUMD_wMDA-hgoUP7AwMD_GChQwP7AwMD_GChQwP7AwMDA
+-hgoUMD_wMDA-hgoUMD_wMDA-hgoUP7AwMD_GChQwP7AwMD_GChQwf7AwMD_GChQwf7AwMD_GChQ
+w-7AwMD_GChQwP7AwMD_GChQwP7AwMD_GChQwf7AwMD_GChQwf7AwMDB-hgoUP7AwMD_GChQwP7A
+wMD_GChQ-sDAwML_GChQ-sDAwP4YKFDC-sDAwP4YKFDA-sDAwP4YKFD_wMDA-hgoUMD_wMDA-hgo
+UML_wMDA-hgoUMH_wMDA-hgoUMD_wMDA-hgoUMD_wMDA-hgoUP7AwMD_GChQwP7AwMD_GChQ-sDA
+wP4YKFDC-sDAwP4YKFDH-sDAwP4YKFDA-sDAwP4YKFDB-sDAwP4YKFDA-sDAwP4YKFDA-sDAwP4Y
+KFDaBMIMxgTIDMAExv4AAAA0wBTANMAUwDTAFDTALP74qMDA-sDAwP39xATuLP748OjB-gAAAP74
+cKjHDMEEyAzDBMP_GChQwv7AwMD_GChQwv7AwMD_GChQwP7AwMD_GChQwv7AwMD_GChQwP7AwMD_
+GChQwf7AwMD_GChQwv7AwMD_GChQwP7AwMD_GChQwf7AwMD_GChQwP7AwMD_GChQwP7AwMD_GChQ
+-sDAwP4YKFDA-sDAwP4YKFD_wMDA-hgoUMD_wMDA-hgoUP7AwMD_GChQwP7AwMD_GChQ-sDAwP4Y
+KFDA-sDAwP4YKFD_wMDA-hgoUMD_wMDA-hgoUP7AwMD_GChQwP7AwMD_GChQ-sDAwP4YKFDA-sDA
+wP4YKFD_wMDA-hgoUMD_wMDA-hgoUMH_wMDA-hgoUMH_wMDA-hgoUMP_wMDA-hgoUMD_wMDAwf4Y
+KFDC-sDAwP4YKFDA-sDAwP4YKFDA-sDAwP4YKFDA-sDAwMH_GChQ-sDAwP4YKFDC-sDAwP4YKFDC
+-sDAwP4YKFDA-sDAwP4YKFD_wMDA-hgoUMD_wMDA-hgoUP7AwMD_GChQwP7AwMD_GChQwf7AwMD_
+GChQwP7AwMD_GChQwP7AwMD_GChQ-sDAwP4YKFDA-sDAwP4YKFD_wMDA-hgoUML_wMDA-hgoUMf_
+wMDA-hgoUMD_wMDA-hgoUMH_wMDA-hgoUMD_wMDA-hgoUMD_wMDA-hgoUNoEwgwEwwzABMcMwATH
+-gAAAMI0whTDNCz__KjAwP7AwMDD-hgoUP7AwMDS-hgoUMH_wMDAzP4YKFDA-sDAwOj_GChQ-sDA
+wMH_GChQ-sDAwMf_GChQ-sDAwMn_GChQwf7AwMDG-hgoUMH_wMDAwQTuLP748OjB-gAAAP74cKjI
+DMEExwzDBMP_GChQwv7AwMD_GChQw-7AwMDB-hgoUP7AwMDB-hgoUML_wMDAwP4YKFD_wMDA-hgo
+UMP_wMDAwf4YKFDB-sDAwMD_GChQwP7AwMDA-hgoUMH_wMDAwf4YKFD_wMDA-hgoUMD_wMDA-hgo
+UMD_wMDAwf4YKFD_wMDAwf4YKFDB-sDAwMD_GChQwP7AwMD_GChQwP7AwMD_GChQ-sDAwP4YKFDA
+-sDAwP4YKFDA-sDAwMH_GChQwf7AwMDA-hgoUMH_wMDAwP4YKFDA-sDAwMH_GChQ-sDAwP4YKFDE
+-sDAwMD_GChQwP7AwMDB-hgoUML_wMDA-hgoUMD_wMDAwf4YKFD_wMDA-hgoUMP_wMDAwf4YKFD_
+wMDA-hgoUMD_wMDA-hgoUMD_wMDAwP4YKFDC-sDAwP4YKFDA-sDAwP4YKFDA-sDAwP4YKFD_wMDA
+wf4YKFDA-sDAwML_GChQ-sDAwML_GChQwP7AwMD_GChQwf7AwMDB-hgoUMH_wMDAwf4YKFD_wMDA
+-hgoUMD_wMDA-hgoUNoEwgzFBMcMwATI-gAAADTAFMA0wBTANMAUwSz__KjAwP7AwMDD-hgoUP7A
+wMDS-hgoUP7AwMDA-hgoUP7AwMDK-hgoUP7AwMDq-hgoUMD_wMDA-hgoUMD_wMDAx-4YKFD_wMDA
+yf4YKFD_wMDAyv4YKFD_wMDAwQTuLP748OjB-gAAAP74cKjJDMAE0f4YKFD94-7AwMD_GChQzf7A
+wMDA-hgoUP3jBN7_AAAANMEUwjTCFDQs-viowMD_wMDAw-4YKFD_wMDAw-4YKFDA-sDAwMD_GChQ
+-sDAwMH_GChQ-sDAwMT_GChQ-sDAwMD_GChQ-sDAwMD_GChQwP7AwMDA-hgoUP7AwMD_GChQwP7A
+wMDA-hgoUP7AwMDC-hgoUMD_wMDAwP4YKFD_wMDA-hgoUMD_wMDA-hgoUMD_wMDA-hgoUP7AwMDB
+-hgoUMD_wMDAwP4YKFDB-sDAwMH_GChQwf7AwMDA-hgoUMD_wMDAxf4YKFD_wMDA-hgoUP7AwMD_
+GChQ-sDAwMD_GChQwP7AwMDB-hgoUMH_wMDAwP4YKFDA-sDAwMX_GChQ-sDAwML_GChQ-sDAwMD_
+GChQ-sDAwML_GChQ-sDAwMEE7iz__PDowf4AAAD__HCo3v4YKFD9-f3cBN7_AAAANMAUwDTAFMA0
+wBQ0wCz__KjAwP7AwMDD-hgoUP7AwMDC-hgoUP7AwMDA-hgoUP7AwMD_GChQ-sDAwMH_GChQ-sDA
+wMT_GChQwf7AwMDA-hgoUP7AwMDA-hgoUP7AwMD_GChQwP7AwMDB-hgoUML_wMDA-hgoUP7AwMDA
+-hgoUP7AwMD_GChQwP7AwMDB-hgoUP7AwMD_GChQ-sDAwP4YKFD_wMDAwv4YKFD_wMDA-hgoUP7A
+wMDA-hgoUP7AwMD_GChQ-sDAwML_GChQ-sDAwMD_GChQ-sDAwMT_GChQ-sDAwP4YKFD_wMDA-hgo
+UP7AwMD_GChQ-sDAwMD_GChQ-sDAwP4YKFD_wMDAwP4YKFD_wMDA-hgoUP7AwMDA-hgoUP7AwMDE
+-hgoUP7AwMDC-hgoUP7AwMDA-hgoUP7AwMDC-hgoUP7AwMDBBO4s-vjw6MH_AAAA-vhwqP39-f3e
+FMI0whTDNCz__KjAwP7AwMDD-hgoUP7AwMDC-hgoUP7AwMDA-hgoUP7AwMD_GChQ-sDAwP4YKFD_
+wMDA-hgoUP7AwMDE-hgoUP7AwMDC-hgoUML_wMDA-hgoUP7AwMDD-hgoUP7AwMDB-hgoUP7AwMDA
+-hgoUP7AwMD_GChQ-sDAwML_GChQ-sDAwP4YKFD_wMDA-hgoUP7AwMDA-hgoUMH_wMDA-hgoUP7A
+wMDA-hgoUP7AwMD_GChQ-sDAwML_GChQwv7AwMDE-hgoUP7AwMDB-hgoUP7AwMD_GChQ-sDAwMD_
+GChQ-sDAwP4YKFD_wMDAwP4YKFD_wMDA-hgoUML_wMDAxP4YKFD_wMDAw-4YKFDA-sDAwMP_GChQ
+-sDAwMEE7iz__PDowf4AAAD__HCo-f39-d4UNMAUwDTAFMA0wBTBLP74qMDA-sDAwMP_GChQ-sDA
+wML_GChQ-sDAwMD_GChQ-sDAwP4YKFD_wMDA-hgoUP7AwMD_GChQ-sDAwMT_GChQ-sDAwML_GChQ
+-sDAwML_GChQ-sDAwMP_GChQ-sDAwMH_GChQ-sDAwMD_GChQ-sDAwP4YKFD_wMDAwv4YKFD_wMDA
+wf4YKFD_wMDA-hgoUP7AwMDA-hgoUP7AwMD_GChQ-sDAwMD_GChQ-sDAwP4YKFD_wMDAwv4YKFD_
+wMDAx-4YKFD_wMDAwf4YKFD_wMDA-hgoUP7AwMDA-hgoUP7AwMD_GChQ-sDAwMD_GChQ-sDAwP4Y
+KFD_wMDAx-4YKFD_wMDAwv4YKFD_wMDAwP4YKFD_wMDAwv4YKFD_wMDAwQTuLP748OjB-gAAAP74
+qMD9-f393hQ0wRTCNMIUNCwEwP7AwMDD-hgoUML_wMDAwP4YKFDA-sDAwMH_GChQ-sDAwP4YKFD_
+wMDAxf4YKFD_wMDAw-4YKFDB-sDAwP4YKFD_wMDAw-4YKFD_wMDAwv4YKFDA-sDAwMD_GChQ-sDA
+wML_GChQ-sDAwMH_GChQ-sDAwMD_GChQwf7AwMD_GChQ-sDAwMD_GChQ-sDAwMD_GChQwf7AwMDA
+-hgoUMH_wMDAxP4YKFD_wMDAwf4YKFD_wMDAwP4YKFDA-sDAwMH_GChQwf7AwMDA-hgoUMH_wMDA
+xP4YKFD_wMDAwv4YKFD_wMDAwP4YKFD_wMDAwv4YKFD_wMDAwQTuLP748OjANP4AAAD__KjA-f39
+-d4UNMAUwDTAFMA0wBQ0wCwEwP7AwMD98f4YKFDB-sDAwMb_GChQwf7AwMDBBO4sNMH_AAAABP39
+-f3eFMI0whTDNCwEwf7AwMD9-cIE7yz_AAAANMAUBP39-f3eFDTAFMA0wBTANMAUwSwEwv7AwMD9
+-cAE8Cz_AAAAwgT9-f393hQ0wRTCNMIUNCwE-f32LBQ0wBQE6SzEBPwsxAT8LMQE-CzEBNkUNMAU
+wDTAFMA0wBQ0wCwEwv7AwMD9-e0Ewyw0wf4AAAAE6Cz_YECIwf74cKjB-kAoMP74qMD6LP5gQIjB
+-vhwqMH_QCgw-viowPos-mBAiMH__HCowf5AKDD__KjA_iz_YECIwf74cKjB-kAoMP74qMDYFMI0
+whTDNCwEwf7AwMD9-e8Ewiz_AAAANMAUBOEsxf5gQIjB-vhwqML_QCgw-viowPMsxf5gQIjB-vhw
+qML_QCgw-viowPMsxf5gQIjB-vhwqML_QCgw-viowPMsxf5gQIjB-vhwqML_QCgw-viowNgUNMAU
+wDTAFMA0wBTBLATA-sDAwP398QTBLP4AAADCBOAs-vhwqMws-viowPIs-vhwqMws-viowPIs-vhw
+qMws-viowPIs-vhwqMws-viowNgUNMEUwjTCFDQsBMD_wMDAxP4YKFDA-sDAwMX_GChQwP7AwMDL
+-hgoUP7AwMDJ-hgoUP7AwMDG-hgoUMD_wMDAwP4YKFD_wMDAwP4YKFDA-sDAwM-_GChQ-sDAwNj_
+GChQ-sDAwMH_GChQ-sDAwMP_GChQ-sDAwNX_GChQ-sDAwMH_GChQ-sDAwMf_GChQwf7AwMDG-hgo
+UMH_wMDAxwTBLP4AAAA0wBQE4Cz__HCozCz__KjA8iz__HCozCz__KjA8iz__HCozCz__KjA8iz_
+_HCozCz__KjA2BQ0wBTANMAUwDTAFDTALATA-sDAwMP_GChQ-sDAwMD_GChQ-sDAwMX_GChQ-sDA
+wMv_GChQ-sDAwMn_GChQ-sDAwMX_GChQ-sDAwMb_GChQ-sDAwM-_GChQ-sDAwNz_GChQ-sDAwMP_
+GChQ-sDAwNX_GChQ-sDAwMH_GChQ-sDAwMf_GChQ-sDAwMT_GChQ-sDAwMP_GChQ-sDAwMcEwSw0
+wf4AAAAE4Cz__HCozCz__KjA8iz__HCozCz__KjA8iz__HCozCz__KjA8iz__HCozCz__KjA2BTC
+NMIUwzQsBMD_wMDAw-4YKFD_wMDAw-4YKFDA-sDAwMH_GChQ-sDAwMH_GChQwP7AwMDB-hgoUMH_
+wMDA-hgoUML_wMDAwP4YKFDA-sDAwMH_GChQwf7AwMDF-hgoUP7AwMDB-hgoUMD_wMDAwf4YKFD_
+wMDAwf4YKFDA-sDAwMb_GChQwf7AwMD_GChQwf7AwMDB-hgoUMD_wMDAwP4YKFD_wMDAwf4YKFD_
+wMDAwP4YKFDB-sDAwMT_GChQwP7AwMDA-hgoUML_wMDAxf4YKFDB-sDAwMT_GChQwf7AwMDB-hgo
+UMD_wMDAwP4YKFDC-sDAwP4YKFDB-sDAwMX_GChQ-sDAwMT_GChQ-sDAwMP_GChQ-sDAwMcEwSz_
+AAAANMAUBOAs-vhwqMws-viowPIs-vhwqMws-viowPIs-vhwqMws-viowPIs-vhwqMws-viowNgU
+NMAUwDTAFMA0wBTBLATA-sDAwMT_GChQwP7AwMDA-hgoUP7AwMDA-hgoUP7AwMDA-hgoUP7AwMDA
+-hgoUP7AwMDA-hgoUP7AwMD_GChQ-sDAwMP_GChQ-sDAwMH_GChQ-sDAwMD_GChQ-sDAwP4YKFD_
+wMDAwP4YKFD_wMDAxP4YKFDC-sDAwMD_GChQ-sDAwMH_GChQ-sDAwMD_GChQ-sDAwMD_GChQ-sDA
+wMT_GChQ-sDAwML_GChQ-sDAwMD_GChQ-sDAwP4YKFD_wMDAwP4YKFD_wMDA-hgoUP7AwMDB-hgo
+UP7AwMD_GChQ-sDAwMj_GChQ-sDAwMH_GChQ-sDAwMb_GChQ-sDAwMf_GChQ-sDAwMD_GChQ-sDA
+wML_GChQ-sDAwMD_GChQ-sDAwMH_GChQ-sDAwMD_GChQ-sDAwMT_GChQ-sDAwMP_GChQ-sDAwMT_
+GChQ-sDAwMcEwSz_AAAAwgTgLP74cKjMLP74qMDyLP74cKjMLP74qMDyLP74cKjMLP74qMDyLP74
+cKjMLP74qMDYFDTBFMI0whQ0LATA-sDAwMb_GChQ-sDAwP4YKFDC-sDAwMD_GChQ-sDAwMD_GChQ
+wv7AwMD_GChQ-sDAwMP_GChQ-sDAwMH_GChQwv7AwMD_GChQ-sDAwMD_GChQ-sDAwMX_GChQ-sDA
+wML_GChQ-sDAwMH_GChQ-sDAwMD_GChQwv7AwMDF-hgoUMD_wMDAwP4YKFD_wMDAwP4YKFD_wMDA
+-hgoUP7AwMDA-hgoUP7AwMD_GChQ-sDAwP4YKFD_wMDA-hgoUP7AwMDA-hgoUMD_wMDAxv4YKFD_
+wMDAwf4YKFD_wMDAx-4YKFDA-sDAwMX_GChQ-sDAwMD_GChQ-sDAwMD_GChQwf7AwMDA-hgoUP7A
+wMDB-hgoUP7AwMDA-hgoUP7AwMDE-hgoUP7AwMDD-hgoUP7AwMDE-hgoUP7AwMDHBMEs-gAAADTA
+FATgLP74cKjMLP74qMDyLP74cKjMLP74qMDyLP74cKjMLP74qMDyLP74cKjMLP74qMDYFDTAFMA0
+wBTANMAUNMAsBMD_wMDAw-4YKFD_wMDAwP4YKFD_wMDA-hgoUP7AwMDD-hgoUP7AwMDA-hgoUP7A
+wMDC-hgoUP7AwMDD-hgoUP7AwMDB-hgoUP7AwMDC-hgoUP7AwMDA-hgoUP7AwMDF-hgoUP7AwMDC
+-hgoUP7AwMDB-hgoUP7AwMDA-hgoUP7AwMDK-hgoUP7AwMD_GChQ-sDAwMD_GChQ-sDAwP4YKFD_
+wMDAwP4YKFD_wMDA-hgoUP7AwMD_GChQ-sDAwP4YKFD_wMDAwv4YKFD_wMDAxf4YKFD_wMDAwf4Y
+KFD_wMDAyf4YKFD_wMDAxP4YKFDB-sDAwMD_GChQ-sDAwMD_GChQ-sDAwMD_GChQ-sDAwMH_GChQ
+-sDAwMD_GChQ-sDAwMT_GChQ-sDAwML_GChQ-sDAwMX_GChQ-sDAwMcEwSw0wf4AAAAE4Cz__HCo
+zCz__KjA8iz__HCozCz__KjA8iz__HCozCz__KjA8iz__HCozCz__KjA2BTCNMIUwzQsBMD_wMDA
+xP4YKFDA-sDAwMH_GChQwf7AwMDA-hgoUMD_wMDAwP4YKFDB-sDAwMD_GChQwf7AwMDB-hgoUMD_
+wMDAwP4YKFDB-sDAwMD_GChQwf7AwMDF-hgoUP7AwMDB-hgoUMH_wMDAwP4YKFDA-sDAwMD_GChQ
+wf7AwMDE-hgoUMH_wMDAwP4YKFD_wMDAwP4YKFD_wMDAwP4YKFDA-sDAwMH_GChQ-sDAwP4YKFD_
+wMDAwP4YKFDB-sDAwMX_GChQwf7AwMDB-hgoUMD_wMDAxP4YKFDB-sDAwMX_GChQ-sDAwMP_GChQ
+wf7AwMDB-hgoUMD_wMDA-hgoUP7AwMDA-hgoUP7AwMDE-hgoUP7AwMDC-hgoUP7AwMDF-hgoUP7A
+wMDHBMEs-gAAADTAFATgLP74cKjMLP74qMDyLP74cKjMLP74qMDyLP74cKjMLP74qMDyLP74cKjM
+LP74qMDYFDTAFMA0wBTANMAUwSwEwP7AwMD9-cH_GChQ-sDAwNb_GChQwf7AwMDG-hgoUMH_wMDA
+xwTBLP4AAADCBOAs-vhwqMws-viowPIs-vhwqMws-viowPIs-vhwqMws-viowPIs-vhwqMws-vio
+wNgUNMEUwjTCFDQsBMH_wMDA-f3vBMIs-gAAADTAFATgLP74cKjMLP74qMDyLP74cKjMLP74qMDy
+LP74cKjMLP74qMDyLP74cKjMLP74qMDYFDTAFMA0wBTANMAUNMAsBML_wMDA-f3tBMMsNMH_AAAA
+BOAs-vhwqMws-viowPIs-vhwqMws-viowPIs-vhwqMws-viowPIs-vhwqMws-viowNgUwjTCFMM0
+LAT9-fYsFDTAFAThLMwE9CzMBPQszAT0LMwE2RQ0wBTANMAUwDTAFMEsBML_wMDA-f3KBOYs-gAA
+AMIE-f39-d4UNMEUwjTCFDQsBMH_wMDA-f3MBOUs-gAAADTAFAT9-f393hQ0wBTANMAUwDTAFDTA
+LATA-sDAwP39zgTkLDTB-gAAAATb-hgoUMAEwRTABP3LFATFFATZFATMFMAEwRTABM0UBBQE0RQE
+xBQExxTABMEUwATNFAQUBM0UwATHFATD-gAAAMI0whTDNCwEwP7AwMDD-hgoUML_wMDAxP4YKFD_
+wMDAz-4YKFD_wMDAxP4YKFDA-sDAwMb_GChQ-sDAwML_GChQ-sDAwNb_GChQwP7AwMDG-hgoUMD_
+wMDAwP4YKFD_wMDAwP4YKFDA-sDAwM-_GChQwf7AwMDG-hgoUMH_wMDAyATkLP4AAAA0wBQE3P4Y
+KFAEwhQE-csUBMUUBNkUBM0UBMAUBMAUBMwUBBQE0RQEzxQEwBQEwBQEzBQEFATMFATAFATFFMAE
+w-4AAAA0wBTANMAUwDTAFMEsBMD_wMDAw-4YKFD_wMDAx-4YKFD_wMDAz-4YKFD_wMDAxf4YKFD_
+wMDAxv4YKFD_wMDA2v4YKFD_wMDAx-4YKFD_wMDAxv4YKFD_wMDAz-4YKFD_wMDAyv4YKFD_wMDA
+yATkLP4AAADCBNb_GChQwATCFATCFATGFMAEwBTBBMAUwQTBFMEE3hTABMAUwQTAFMEEwRTBBMAU
+wATAFMIEwBTABMkUwATBFMEEFMIEFAQUwATAFMAEwhQEwBQEwxTABMAUwQTBFMEEFMEEwRTABMAU
+BMAUBMQUwQTBFMAEwBTBBMMUBMAUBMMUwATAFMEEwRTBBBTBBMEUwATAFATAFATCFATGFATD-gAA
+ADTBFMI0whQ0LATA-sDAwMP_GChQ-sDAwMP_GChQwP7AwMDA-hgoUP7AwMDA-hgoUP7AwMDA-hgo
+UMD_wMDAxv4YKFDB-sDAwMD_GChQwP7AwMDB-hgoUP7AwMDB-hgoUMD_wMDAwP4YKFDC-sDAwP4Y
+KFDA-sDAwMH_GChQwP7AwMDA-hgoUMH_wMDAxv4YKFDA-sDAwMH_GChQ-sDAwMf_GChQ-sDAwMH_
+GChQwP7AwMDB-hgoUP7AwMDB-hgoUMD_wMDAwf4YKFDB-sDAwMT_GChQ-sDAwML_GChQ-sDAwMD_
+GChQ-sDAwML_GChQ-sDAwMgE5Cz_AAAANMAUBNj_GChQBMEUBMIUBMgUBBQEwBQEFATAFAQUBOMU
+BBQEwBQEFATAFAQUBMAUBMIUBMAUBMQUBMoUBBQEwxQEwRTABMQUBMEUBMEUwATDFAQUBMAUBBQE
+wBQEFATAFAQUBMAUBBQEwBQExBQEwBQEwRQEwBQEwBQEwhQEwRTABMMUBBQEwBQEFATAFAQUBMAU
+BBQEwBQEFATAFATAFMAExxQEw-4AAAA0wBTANMAUwDTAFDTALATA-sDAwMP_GChQwf7AwMDD-hgo
+UP7AwMD_GChQ-sDAwP4YKFD_wMDAwP4YKFD_wMDAwP4YKFD_wMDAxP4YKFD_wMDAwP4YKFD_wMDA
+-hgoUP7AwMDA-hgoUP7AwMDA-hgoUP7AwMDA-hgoUP7AwMDA-hgoUP7AwMDA-hgoUP7AwMDC-hgo
+UP7AwMDA-hgoUP7AwMDA-hgoUP7AwMD_GChQ-sDAwMD_GChQ-sDAwMT_GChQ-sDAwMD_GChQ-sDA
+wP4YKFDC-sDAwMT_GChQwv7AwMDA-hgoUP7AwMDB-hgoUP7AwMDA-hgoUP7AwMDA-hgoUP7AwMD_
+GChQ-sDAwMf_GChQ-sDAwML_GChQ-sDAwMD_GChQ-sDAwML_GChQ-sDAwMgE5Cw0wf4AAAAE1v4Y
+KFDBBMEUBMIUBMYUwQQUBMAUBBQEwBQEwBTABN8UwQQUBMAUBBQEwBQEFATAFATAFMEEwBQEwhTB
+BMgUwQTAFMAEwRQEwRQEwxTBBMEUBMMUBMAUwQQUBMAUBBQEwBQEFATAFAQUBMAUBMAUwATFFATA
+FATBFATAFATAFATCFATDFATAFMEEFATAFAQUBMAUBBQEwBQEFATAFATAFMAEwxQExhQEw-4AAADC
+NMIUwzQsBMD_wMDAw-4YKFD_wMDAw-4YKFDB-sDAwP4YKFDA-sDAwMH_GChQwv7AwMDE-hgoUP7A
+wMDA-hgoUP7AwMD_GChQwv7AwMDA-hgoUP7AwMDA-hgoUML_wMDAwP4YKFD_wMDAwv4YKFD_wMDA
+wP4YKFD_wMDAwP4YKFD_wMDA-hgoUP7AwMDA-hgoUP7AwMDE-hgoUP7AwMDA-hgoUP7AwMDA-hgo
+UP7AwMDH-hgoUP7AwMDC-hgoUP7AwMDB-hgoUP7AwMDA-hgoUML_wMDAwP4YKFDA-sDAwMX_GChQ
+-sDAwMP_GChQwP7AwMDD-hgoUP7AwMDIBOQs-gAAADTAFATV-hgoUATAFATBFATCFATFFATAFAQU
+wQTAFMEEwxQE3RQEwBQEFMEEwBTBBMAUBMAUBBQEwBQEwBQEwRQEwBQExxQEwBQEwhQEwBQEwRQE
+whQEwBQEwRQEwBQEwBQEFATAFAQUBMAUBBQEwBQEFATAFAQUBMAUBBQEwBQExBQEwBQEwRQEwBQE
+wBQEwhQEwBQEwBQEFATAFAQUBMAUBBQEwBQEFATAFAQUBMAUBBQEwBQEFATAFATGFATD-gAAADTA
+FMA0wBTANMAUwSwEwP7AwMDD-hgoUP7AwMDC-hgoUP7AwMDA-hgoUP7AwMD_GChQ-sDAwP4YKFD_
+wMDAwP4YKFD_wMDAx-4YKFD_wMDAwP4YKFD_wMDA-hgoUP7AwMDD-hgoUP7AwMDA-hgoUP7AwMDD
+-hgoUP7AwMDC-hgoUP7AwMDA-hgoUP7AwMDA-hgoUP7AwMD_GChQ-sDAwMD_GChQ-sDAwMT_GChQ
+-sDAwMD_GChQ-sDAwMD_GChQ-sDAwMf_GChQ-sDAwML_GChQ-sDAwMH_GChQ-sDAwMD_GChQ-sDA
+wMX_GChQ-sDAwMT_GChQ-sDAwML_GChQ-sDAwMD_GChQ-sDAwML_GChQ-sDAwMgE5Cz_AAAAwgTW
+-hgoUMEEwRTABMEUwAQUwgTAFMEEFATCFATCFMEE3xTBBBQEwhQEwxTBBMAUwQTBFMAEwBTBBMgU
+wQQUwQTCFMAEFATDFMEEwRTABMAUwATBFMEEFATAFATAFMEEFMEEwRTABMAUBMAUBMAUBMEUwQTB
+FMEEFATAFATCFMAEwBTABMEUwQQUBMAUBMAUwQQUwQTBFMAEwBQEwBQEwBTABMAUwgTAFMEEwBQE
+-gAAADTBFMI0whQ0LATA-sDAwMP_GChQ-sDAwMP_GChQwf7AwMD_GChQ-sDAwMD_GChQ-sDAwMD_
+GChQwf7AwMDF-hgoUMH_wMDAwP4YKFDB-sDAwMD_GChQwP7AwMDA-hgoUMH_wMDAwf4YKFDA-sDA
+wP4YKFDB-sDAwMD_GChQwP7AwMDA-hgoUP7AwMDA-hgoUP7AwMDF-hgoUMD_wMDAwf4YKFD_wMDA
+x-4YKFD_wMDAwf4YKFDB-sDAwMD_GChQwP7AwMDA-hgoUMH_wMDA-hgoUMH_wMDAxf4YKFD_wMDA
+wv4YKFD_wMDAwP4YKFD_wMDAwv4YKFD_wMDAyATkLP4AAAA0wBQE7v4YKFAEwhQE6hQEwhQE-f3y
+-gAAADTAFMA0wBTANMAUNMAsBMD_wMDA-fT_GChQwf7AwMDG-hgoUMH_wMDAyATkLDTB-gAAAAT9
+-f393hTCNMIUwzQsBMH_wMDA-f3MBOUs-gAAADTAFAT9-f393hQ0wBTANMAUwDTAFMEsBML_wMDA
+-f3KBOYs-gAAAMIE-f39-d4UNMEUwjTCFDQsBP399iwUNMAUBOksxAT8LMQE-CzEBPP_GChQzgTY
+-gAAADTAFMA0wBTANMAUNMAsBML_wMDA-cwE-eQsNMH_AAAABOgs-mBAiMH__HCowf5AKDD__KjA
+_iz_YECIwf74cKjB-kAoMP74qMD6LP5gQIjB-vhwqMH_QCgw-viowPL_GChQHP748OjAHMD_wMDA
+wRzABML_GChQ-viowNj_AAAAwjTCFMM0LATB-sDAwP3OBP3jLP4AAAA0wBQE4SzF-mBAiMH__HCo
+wv5AKDD__KjA8yzF-mBAiMH__HCowv5AKDD__KjA8yzF-mBAiMH__HCowv5AKDD__KjA8v4YKFD_
+_PDoHAQcwf7AwMDAHMEEwf4YKFD__KjA2P4AAAA0wBTANMAUwDTAFMEsBMD_wMDA-dAE-eIs-gAA
+AMIE4Cz__HCozCz__KjA8iz__HCozCz__KjA8iz__HCozCz__KjA8v4YKFAcwP4AsFDAHML__PDo
+wBzABMAU-viowNj_AAAA-uAIqMEUwjTCFDQsBMD_wMDAxP4YKFDA-sDAwMD_GChQ-sDAwNL_GChQ
+wf7AwMDF-hgoUP7AwMDR-hgoUMH_wMDAxv4YKFDB-sDAwMME-eIs-vjw6MH_AAAA-viowOAs-vhw
+qMws-viowPIs-vhwqMws-viowPIs-vhwqMws-viowPL_GChQ-gCwUMX__PDowxzAFP74qMDY-gAA
+AP7gCKjAFMA0wBTANMAUNMAsBMD_wMDAw-4YKFD_wMDAwP4YKFD_wMDA-hgoUP7AwMDS-hgoUP7A
+wMDA-hgoUP7AwMDE-hgoUP7AwMDR-hgoUP7AwMDK-hgoUP7AwMDDBP3iLP748OjB-gAAAP74qMDg
+LP74cKjMLP74qMDyLP74cKjMLP74qMDyLP74cKjMLP74qMDy-hgoUP4AsFDE-vjw6DTDBDQU-vio
+wNj_AAAAwv7gCKjCFMM0LATA-sDAwMP_GChQ-sDAwML_GChQwf7AwMDB-hgoUMD_wMDAwP4YKFD_
+wMDAwf4YKFD_wMDAxP4YKFD_wMDAwP4YKFD_wMDAwP4YKFDA-sDAwMD_GChQwf7AwMDA-hgoUP7A
+wMDA-hgoUP7AwMDA-hgoUMH_wMDAxP4YKFD_wMDAwv4YKFD_wMDAwP4YKFD_wMDAwv4YKFD_wMDA
+wwT94iz__PDowf4AAAD__KjA4Cz__HCozCz__KjA8iz__HCozCz__KjA8iz__HCozCz__KjA8v4Y
+KFD_ALBQwP4AgFDB-vjw6P4AgFDF-vjw6BT__KjA2P4AAAD_4AiowBTANMAUwDTAFMEsBMD_wMDA
+xP4YKFDA-sDAwMD_GChQ-sDAwMD_GChQ-sDAwP4YKFD_wMDAwP4YKFD_wMDA-hgoUP7AwMDB-hgo
+UP7AwMDE-hgoUP7AwMDA-hgoUP7AwMD_GChQ-sDAwMD_GChQ-sDAwP4YKFD_wMDAwP4YKFD_wMDA
+-hgoUP7AwMDA-hgoUP7AwMD_GChQ-sDAwMD_GChQ-sDAwMT_GChQ-sDAwML_GChQ-sDAwMD_GChQ
+-sDAwML_GChQ-sDAwMME-eIs-vjw6MH_AAAA-viowOAs-vhwqMws-viowPIs-vhwqMws-viowPIs
+-vhwqMws-viowPL_GChQ-gCAUML__PDo-gCAUMH__PDowP4AgFDC-vjw6P74qMDY-gAAADTBFMI0
+whQ0LATA-sDAwMb_GChQ-sDAwP4YKFD_wMDAwP4YKFD_wMDA-hgoUP7AwMDA-hgoUP7AwMD_GChQ
+-sDAwP4YKFD_wMDA-hgoUP7AwMDE-hgoUP7AwMDA-hgoUP7AwMD_GChQwv7AwMD_GChQ-sDAwMD_
+GChQ-sDAwP4YKFD_wMDAwP4YKFD_wMDA-hgoUP7AwMDA-hgoUP7AwMDE-hgoUP7AwMDD-hgoUMD_
+wMDAw-4YKFD_wMDAwwT94iz__PDowf4AAAD__KjA4Cz__HCozCz__KjA8iz__HCozCz__KjA8iz_
+_HCozCz__KjA8v4YKFDD-vjw6BTCBBTCBP74qMDY-gAAADTAFMA0wBTANMAUNMAsBMD_wMDAw-4Y
+KFD_wMDAwP4YKFD_wMDA-hgoUP7AwMDA-hgoUP7AwMD_GChQ-sDAwMD_GChQ-sDAwP4YKFD_wMDA
+-hgoUP7AwMD_GChQ-sDAwMT_GChQ-sDAwMD_GChQ-sDAwP4YKFD_wMDAwv4YKFD_wMDAwP4YKFD_
+wMDA-hgoUP7AwMDA-hgoUP7AwMDA-hgoUMH_wMDAxP4YKFD_wMDAwv4YKFD_wMDAwP4YKFD_wMDA
+wv4YKFD_wMDAwwT94iz__PDowf4AAAD__KjA4Cz__HCozCz__KjA8iz__HCozCz__KjA8iz__HCo
+zCz__KjA9-748Oj_GChQwgT__KjAwv748Oj__KjA2P4AAADCNMIUwzQsBMD_wMDAxP4YKFDA-sDA
+wMD_GChQ-sDAwMD_GChQ-sDAwMD_GChQwP7AwMDB-hgoUP7AwMD_GChQ-sDAwMX_GChQwf7AwMDB
+-hgoUMH_wMDA-hgoUMH_wMDAwf4YKFDB-sDAwML_GChQ-sDAwMT_GChQ-sDAwML_GChQ-sDAwMD_
+GChQ-sDAwML_GChQ-sDAwMME-eIs-oBwmMD__PDo-gAAAP74qMDg-kAoMP74cKjMLP74qMDyLP74
+cKjMLP74qMDyLP74cKjMLP74qMD3-vjw6P4YKFDCBP74qMDC-vjw6P74qMDY-gAAADTAFMA0wBTA
+NMAUwSwEwP7AwMDy-hgoUMD_wMDAxf4YKFDB-sDAwMb_GChQwf7AwMDDBP3iLP748OjB-gAAAP74
+qMDgLP74cKjMLP74qMDyLP74cKjMLP74qMDyLP74cKjMLP74qMD2-hgoUP748OgUwQTB-viowMH_
+_PDo-viowNj_AAAANMEUwjTCFDQsBMH_wMDA-c4E-eMs-oBwmP748OjA-gAAAP74qMDg-kAoMP74
+cKjMLP74qMDyLP74cKjMLP74qMDyLP74cKjMLP74qMD2-hgoUMD__PDoFMP__KjAwP748Oj__KjA
+2f4AAAA0wBTANMAUwDTAFDTALATC-sDAwP3MBP3kLP748Oj_gHCYBP4AAAD__KjA4P5AKDD__HCo
+zCz__KjA8iz__HCozCz__KjA8iz__HCozCz__KjA_f748Oj__KjAw-748Oj__KjA2hTCNMIUwzQs
+BP399iz_gHCY-vjw6MAU-viowOH_QCgwzAT0LMwE9CzMBPv__PDow-74qMDbFDTAFMA0wBTANMAU
+wSwE-f32LP748OjBFP74qMD9-f393hQ0wRTCNMIUNCwE-f32LP748OjBFP74qMD9-f393hQ0wBTA
+NMAUwDTAFDTALATA-hgoUMEExhQEwRQEzhTABMUUBMEUBM0UBNIUBMoUwAT90Sz__PDowf4AAAD_
+_KjA-hgoUAQUBMwUBMAUBMUUwATBFATDFATGFMAE1BQEwBQEFATAFATAFMAEwBTCBMAUwATAFMEE
+wBQEwhTCBMQUBMQUBNUUBMkUBMIUBNQUBMQUBMQUBNoUBMkUBMMUBNv_AAAAwjTCFMM0LATA-hgo
+UATAFATFFATBFATNFATHFATBFATNFATgFAT90Sz__PDowf4AAAD__KjA-hgoUAQUBMwUwgTGFATB
+FATNFATUFATAFAQUwAQUBBQEwBQEwRQEwBQEwBQEFATAFAQUBMIUBMcUBNwUBMkUBMIUBNQUBMQU
+BOEUBMkUBMMUBNv_AAAANMAUwDTAFMA0wBTBLATA-hgoUATAFATAFMAEwBTCBBTBBMYUwATBFATG
+FMIEFMEEwRTABMUUwgTAFMAEwBQEFMAEFMAEFATAFMAEwBTBBMEUwATBFAT90Sz_AAAAwv4YKFDA
+BBTBBMEUwATAFATAFAQUwgQUBMAUBMEUBMAUwgTAFMAEwBTBBMIUBMEUwATAFATAFATAFMAEwBQE
+FMAEFATAFAQUBBTABBQExBQEwBQEwBQEFATAFAQUBMIUBMcUwQTBFMAEwBTBBMAUwQTJFMEEwBTA
+BMEUwQQUwQTAFMEEwRTABMEUwATAFAQUwATAFMEExBTBBMEUwATAFMEE0xTBBMAUwATBFMEEFATA
+FAQUwgTAFMAEwBTBBND_AAAANMEUwjTCFDQsBMD_GChQwQTDFATAFATBFATAFATEFATAFAQUwgTF
+FATBFATAFAQUBMAUBMUUBMEUBMAUBBTABMEUBBQEFATAFATAFATAFATCFATAFAT90Sz_AAAANMAU
+BP4YKFAEFATAFAQUBMAUBBQEwBQEFATAFAQUBMAUBMEUBMEUBMMUBMAUBMAUBMEUBMMUBBQEwBQE
+FATAFAQUwATBFATAFAQUBMAUBMAUwATCFATAFMIEFMEEwBQEwhTBBMUUBMAUBMEUBMAUBMAUBBQE
+wBQExxQEwBQEwhQEFATCFATAFAQUBMAUBBQEwBQEwhQEFMAEwRQEwBQExBQEwBQEwRQEwBQEwBQE
+0RQEwBQEFATAFAQUBMIUBBQEwRQEwRQEwBQEFATAFATP-gAAADTAFMA0wBTANMAUNMAsBMD_GChQ
+BMMUwQTAFATBFATAFATEFATAFATAFATHFATBFATAFAQUwgTFFATBFMIEFATCFAQUBBQEwBQEwBQE
+wBQEwBTBBMAUBP3RLDTB-gAAAAT_GChQBBQEwBQEFATAFATAFMAEwBQEwBQEFATAFATBFATBFATD
+FATAFATAFATBFATBFMEEFATAFAQUwgQUBMIUBMAUBBQEwBQEwhQEwRQEwBQEwBQEFATAFAQUBMIU
+BMcUBMAUBMEUBMAUBMAUBBQEwBQExxQEwBQEwBTBBMAUwATAFATAFAQUBMAUBBQEwBQEwBTBBBQE
+whQEwBQExBQEwBQEwRQEwBQEwBQE0RQEwBQEFMIEwBTABMAUwATCFATBFATAFAQUBMAUBM-_AAAA
+wjTCFMM0LATA-hgoUATCFATAFATAFATBFATAFATEFATAFATAFATHFATBFATAFAQUBMgUBMEUBMIU
+BMIUBMEUBMAUBMAUBMAUBBQEwBQEwBQE-dEs-gAAADTAFAT_GChQBBQEwBQEFATAFAQUBMAUBBQE
+wBQEFATAFATBFATBFATDFATAFMEEwhQEwBQEwBQEwBTBBBQEwhQEwhQEwBQEFATAFAQUBMAUBMEU
+BMAUBMAUBBQEwBQEFATCFATHFATAFATBFATAFATAFAQUBMAUBMcUBMAUBBQEwBQEwhQEFATAFAQU
+BMAUBBQEwBQEFATAFAQUBMIUBMAUBMQUBMAUBMEUBMAUBMAUBNEUBMAUBBQExRQEFAQUBMEUBMEU
+BMAUBBTBBND_AAAANMAUwDTAFMA0wBTBLATA-hgoUATDFMEEwRTABBQEwBQExRTABMEUBMgUwAQU
+BMAUBMAUwQTGFMAEwBTBBBQEwhQEwRQEFMEEFATAFATAFMEEwBTABP3QLP4AAADC-hgoUMAEFMEE
+wRTABMAUBMAUBBQEwBQEwBTBBMEUwATBFMAEwBTBBBQExBTABMAUwQTCFATAFMEEFATDFMEEFATA
+FATAFMAEwhQEwBQEwBQEFMEEwBTCBBTCBMAUBMEUwQTBFMEEFATAFAQUBMAUBMgUwQTAFMEEFMEE
+wBQEwBQEFMEEwRTABMEUwQQUBMMUwQTAFATBFMEEwRTBBBQEwBQE0hTBBMAUwQQUwQTAFATAFATB
+FMAEwBTABMAUBNL_AAAANMEUwjTCFDQsBP399iwUNMAUBOn_GChQBM0UwAT9-f3KFATS-gAAADTA
+FMA0wBTANMAUNMAsBP399iw0wRQE-f39-d4UwjTCFMM0LAT9-fYsFDTAFAT9-f393hQ0wBTANMAU
+wDTAFMEsBMD_GChQ-f3xBMEs-gAAAMIE-ef_GChQyQT2FM4E-d7_AAAANMEUwjTCFDQsBMD_GChQ
+-f3xBMEs-gAAADTAFATg-hgoUM4E8xT__PDoxv7AwMDA-hgoUP74qMD1FP74cKjA-vjw6Mj__HCo
+wBT__KjA_yzEBNn_AAAANMAUwDTAFMA0wBQ0wCwEwP4YKFD9-fEEwSw0wf4AAAAE4P4YKFAc-vjw
+6MAcwP7AwMDBHMAEwv4YKFD__KjA8xT__PDowf4AAADD-sDAwMH_GChQ-viowPQU-vhwqMD__PDo
+yP74cKjAFP74qMD6LP5gQIjB-vhwqMH_QCgw-viowNj_AAAAwjTCFMM0LATA-hgoUNf_wMDA-hgo
+UOv_wMDA-hgoUNL_wMDA-hgoUMr_wMDAwP4YKFDE-sDAwMD_GChQ_gTBLP4AAAA0wBQE4P4YKFD_
+_PDoHAQcwf7AwMDAHMEEwf4YKFD__KjA8xT__PDo-gAAAAQUwATB-sDAwMH_GChQ-viowPQU-vhw
+qMD__PDoyP74cKjAFP74qMDzLMX_YECIwf74cKjC-kAoMP74qMDY-gAAADTAFMA0wBTANMAUwSwE
+wP4YKFDE-sDAwP4YKFDQ-sDAwP4YKFDO-sDAwP4YKFDW-sDAwP4YKFDB-sDAwP4YKFDg-sDAwP4Y
+KFDF-sDAwP4YKFD6BMEs-gAAAMIE4P4YKFAcwP4AsFDAHML__PDowBzABMAU-viowPMU-vjw6MH_
+AAAAwATBFMAE-hgoUP74qMD0FP74cKjA-vjw6Mj__HCowBT__KjA8iz__HCozCz__KjA2P4AAAD_
+4AiowRTCNMIUNCwEwP4YKFDE-sDAwP4YKFDB-sDAwMH_GChQ-sDAwP4YKFDA-sDAwP4YKFDA-sDA
+wMH_GChQ-sDAwML_GChQwP7AwMDA-hgoUMD_wMDAwP4YKFD_wMDA-hgoUML_wMDA-hgoUMH_wMDA
+wP4YKFDA-sDAwMH_GChQwP7AwMDB-hgoUMH_wMDAwf4YKFDB-sDAwP4YKFDA-sDAwML_GChQwP7A
+wMDA-hgoUMD_wMDA-hgoUP7AwMDA-hgoUP7AwMDA-hgoUP7AwMD_GChQwP7AwMDA-hgoUMD_wMDA
+wf4YKFDB-sDAwMD_GChQwf7AwMD_GChQxf7AwMD_GChQwP7AwMD_GChQwP7AwMD_GChQwP7AwMDA
+-hgoUPAEwSz_AAAANMAUBOD_GChQ-gCwUMX__PDowxzAFP74qMDzFP748Oj_AAAABBTABMEUwAT_
+GChQ-viowPQU-vhwqMD__PDoyP74cKjAFP74qMDyLP74cKjMLP74qMDY-gAAAP7gCKjAFMA0wBTA
+NMAUNMAsBMD_GChQw-7AwMD_GChQwf7AwMD_GChQwv7AwMD_GChQwP7AwMD_GChQ-sDAwP4YKFDD
+-sDAwP4YKFDB-sDAwP4YKFDA-sDAwP4YKFD_wMDA-hgoUP7AwMD_GChQ-sDAwP4YKFDA-sDAwP4Y
+KFDE-sDAwP4YKFD_wMDA-hgoUMD_wMDA-hgoUP7AwMD_GChQwP7AwMD_GChQ-sDAwP4YKFDD-sDA
+wP4YKFDC-sDAwP4YKFDB-sDAwP4YKFDA-sDAwP4YKFD_wMDAwP4YKFDB-sDAwP4YKFD_wMDA-hgo
+UP7AwMD_GChQwP7AwMD_GChQwP7AwMD_GChQwP7AwMD_GChQwv7AwMD_GChQwP7AwMD_GChQxf7A
+wMD_GChQwP7AwMD_GChQwP7AwMD_GChQwv7AwMD_GChQ7wTBLDTB-gAAAATg-hgoUP4AsFDE-vjw
+6DTDBDQU-viowPMU-vjw6MH_AAAAxQT_GChQ-viowPQU-vhwqMD__PDoyP74cKjAFP74qMDyLP74
+cKjMLP74qMDY-gAAAML_4AiowhTDNCwEwP4YKFDD-sDAwP4YKFDC-sDAwMD_GChQwP7AwMD_GChQ
+wP7AwMD_GChQwP7AwMDA-hgoUMH_wMDA-hgoUMH_wMDAwv4YKFD_wMDA-hgoUP7AwMD_GChQ-sDA
+wP4YKFDA-sDAwP4YKFDC-sDAwMH_GChQ-sDAwP4YKFDA-sDAwP4YKFD_wMDA-hgoUMD_wMDA-hgo
+UMD_wMDAwP4YKFDB-sDAwP4YKFDC-sDAwP4YKFDB-sDAwML_GChQ-sDAwP4YKFDC-sDAwP4YKFD_
+wMDA-hgoUP7AwMD_GChQwP7AwMD_GChQwP7AwMD_GChQwP7AwMD_GChQwP7AwMDB-hgoUMD_wMDA
+-hgoUMX_wMDA-hgoUMD_wMDA-hgoUMD_wMDA-hgoUMD_wMDAwf4YKFDvBMEs-gAAADTAFATg-hgo
+UP4AsFDA-gCAUMH__PDo-gCAUMX__PDoFP74qMDzFP748Oj_AAAABBTABMEUwAT_GChQ-viowPQU
+-vhwqMD__PDoyP74cKjAFP74qMDyLP74cKjMLP74qMDY-gAAAP7gCKjAFMA0wBTANMAUwSwEwP4Y
+KFDC-sDAwP4YKFDF-sDAwP4YKFDA-sDAwMH_GChQwv7AwMD_GChQwP7AwMD_GChQwf7AwMD_GChQ
+wv7AwMD_GChQwf7AwMD_GChQ-sDAwP4YKFDC-sDAwP4YKFDA-sDAwP4YKFD_wMDAwf4YKFDA-sDA
+wMH_GChQw-7AwMD_GChQ-sDAwP4YKFDD-sDAwP4YKFDB-sDAwP4YKFDC-sDAwP4YKFDC-sDAwP4Y
+KFDB-sDAwP4YKFDA-sDAwP4YKFDA-sDAwP4YKFDA-sDAwP4YKFD_wMDA-hgoUMD_wMDA-hgoUMD_
+wMDA-hgoUMX_wMDA-hgoUMD_wMDA-hgoUMD_wMDA-hgoUP7AwMD_GChQwP7AwMD_GChQ7wTBLP4A
+AADCBOD_GChQ-gCAUML__PDo-gCAUMH__PDowf4AgFDB-vjw6P74qMDzFP748OjB-gAAAATDFAT_
+GChQ-viowPQU-vhwqMwU-viowPIs-vhwqMws-viowNj_AAAANMEUwjTCFDQsBMD_GChQwv7AwMD_
+GChQwv7AwMDB-hgoUMP_wMDA-hgoUP7AwMDB-hgoUML_wMDAwP4YKFDA-sDAwMH_GChQ-sDAwP4Y
+KFDB-sDAwP4YKFD_wMDA-hgoUMP_wMDAwf4YKFD_wMDA-hgoUML_wMDA-hgoUML_wMDAwf4YKFDA
+-sDAwP4YKFDE-sDAwMD_GChQwP7AwMDB-hgoUP7AwMD_GChQwv7AwMD_GChQwf7AwMD_GChQ-sDA
+wMH_GChQ-sDAwP4YKFDA-sDAwP4YKFDA-sDAwMH_GChQwP7AwMDA-hgoUMD_wMDA-hgoUMH_wMDA
+wP4YKFDA-sDAwMH_GChQwP7AwMDB-hgoUO8EwSz_AAAANMAUBOD_GChQw-748OgUwwQUwQT__KjA
+8xT__PDo-gAAAAQUBMMUBP4YKFD__KjA9BT__HCozBT__KjA8iz__HCozCz__KjA2P4AAAA0wBTA
+NMAUwDTAFDTALATA-hgoUM3_wMDAwP4YKFDf-sDAwP4YKFDC-sDAwP4YKFD99wTBLDTB-gAAAATl
+-vjw6P4YKFDBBMH__KjAwf748Oj__KjA8xT__PDowf4AAADFBP4YKFD__KjA9BT__HCozBT__KjA
+8iz__HCozCz__KjA2P4AAADCNMIUwzQsBMD_GChQ-f3xBMEs-gAAADTAFATl-vjw6P4YKFDBBP74
+qMDD-vjw6P74qMDzFP748OjJFP74qMD0FP74cKjBFMcEwBT__KjA8iz__HCozCz__KjA2P4AAAA0
+wBTANMAUwDTAFMEsBMD_GChQ-f3xBMEs-gAAAMIE5P4YKFD__PDoFMEEwf74qMDB-vjw6P74qMDz
+FP748OjB-gAAAMUE-hgoUP74qMD0FP74cKjBFP748OjCFML__HCowBT__KjA8iz__HCozCz__KjA
+2P4AAAA0wRTCNMIUNCwEwP4YKFD9-fEEwSz_AAAANMAUBOT_GChQwP748OgUw-74qMDA-vjw6P74
+qMD0FP748OjJFP74qMD0FP74cKjBFP748OjCFML__HCowBT__KjA8iz__HCozCz__KjA2P4AAAA0
+wBTANMAUwDTAFDTALATA-hgoUP398QTBLDTB-gAAAATn-vjw6P74qMDD-vjw6P74qMD1-hgoUP74
+8OjB-gAAAMEEFMEE-hgoUP74qMD1FP74cKjAFP748OjCFML__HCowBT__KjA8iz__HCozCz__KjA
+2P4AAADCNMIUwzQsBP399iwUNMAUBOj__PDow-74qMD2-hgoUMsE9hTMBPMszATZ-gAAADTAFMA0
+wBTANMAUwSwEwf4YKFDABMAUwQTAFATAFATFFATBFATRFATHFMAEwxQExhTABM4UwATNFATAFATR
+FMAEwBQEwBTABOYs-gAAAMIE-f39-d4UNMEUwjTCFDQsBMD_GChQBMAUBBQEwBQEFATAFATFFATB
+FATRFATIFATDFATFFATRFATNFATTFATGFATmLP4AAAA0wBQE-f39-d4UNMAUwDTAFMA0wBQ0wCwE
+wP4YKFAEwhQEwBQEFATAFATEFMIEFMEEwBQEFMAEwBTABMEUwQQUwQTBFMAEwRQEwRTBBMUUBMIU
+wATAFAQUwATFFATBFMAEwRTABMEUwQQUwATAFMEEwRTBBMUUBMEUwATBFATBFMAEwRTBBNssNMH_
+AAAABNj_GChQBMkUBMMUBMwUwATcFATeFATgFATPFMAEzRQEyBQExRTABNoUwATh-gAAAMI0whTD
+NCwEwP4YKFAEwhTBBMAUBMAUBMUUBMEUBMAUBBTABMEUBMAUBBQEwhQEwBQEFATAFATAFATAFATA
+FATEFMIEFATAFAQUwATHFATAFATAFATCFAQUBMAUBMAUBMAUBMAUBBQEwBQExBTCBMAUBMEUBMAU
+BMAUBBQE3iz_AAAANMAUBNj_GChQBMkUBMMUBMsUBMAUBNsUBN4UBOAUBNAUBM0UBMgUBMQUBMAU
+BNgUBMAUBOD_AAAANMAUwDTAFMA0wBTBLATA-hgoUATCFATCFATAFATFFATBFATAFAQUBMIUwgTA
+FMAEwBQEwBQEFATAFATAFATAFATAFATFFATBFATAFAQUBMgUBMAUBMAUBMAUwQQUBMAUBMAUBMAU
+BMAUBBQEwBQExRQEwhQEwRQEwBTCBMAUwATcLP4AAADCBNb_GChQwQTAFMAEwRTBBBQEwBQEFMIE
+wBTABMAUwQTDFATZFMEEwBTABMEUwQQUBMAUBBTCBMAUwATAFMEEwBTCBMAUwQTXFMEEwBTABMAU
+BMAUBBTBBMIUBMEUwATBFMAEwRTBBMAUwQTBFMEEwBTBBBQEwxTBBBQEFMAEwBTABMEUwATAFMEE
+wBQEwhTBBMEUwATAFATAFATAFMAEwBQEFMAExBTB-gAAADTBFMI0whQ0LATA-hgoUATAFAQUBMIU
+BMAUBMUUBMEUBMAUBBQEwhQExRQEFATAFAQUBMAUBMAUBMAUBMAUBMUUBMEUBMAUBBQEyBQEwBQE
+wBQEFATAFAQUBMAUBMAUBMAUBMAUBMAUwQTFFATCFATBFATAFATFFATbLP4AAAA0wBQE1f4YKFAE
+wBQEFATAFAQUBMIUBBQEwRQEwRQEwBQEFATAFATBFATZFATAFAQUBMAUBBQEwhQEwBQEFMIEFATA
+FAQUBMAUBMAUBMEUBNkUBMAUBBQEwBQEFATAFAQUBMAUBMEUBMAUBMAUBMIUBBQEwBQEFATDFATA
+FAQUBMMUwATAFATCFMAEwRQEwBQEFATAFAQUBMAUBMAUwATAFATAFAQUBMAUBBQEwBQEFATAFAQU
+wATGFATA-gAAADTAFMA0wBTANMAUNMAsBMH_GChQwATAFATDFMEExhTABBQEwBQEFATDFMEEFMEE
+wBQEwBQEwBTABMEUwATAFMEExRQEwhTABMAUBMgUwATAFMAEwRTBBMAUwQQUwQQUBMAUBMIUBMUU
+BMEUwQTAFMAEwBTBBBTBBNwsNMH_AAAABNX_GChQBMAUBBTCBMAUwATAFMAEwhQEwRQEwBQEFATA
+FATAFATaFATAFAQUBMAUBBQEwhQEwBQEFATAFAQUwgQUBMAUBMAUBMIUwATXFATAFAQUBMAUBBQE
+wBQEFATAFATBFATAFATAFATAFMEEFATAFATAFMAEwRQEwBQEwBTABMMUBBQEwhQEwhTCBBTCBBQE
+wBQEwhQEFATAFAQUBMAUBBQEwBQEFMIEFATHFATA-gAAAMI0whTDNCwE-fj_GChQwAT4LP4AAAA0
+wBQE1f4YKFAEwBQEFATFFAQUBBQEwRQEwRQEwBQEFMEEwBQE2xQEwBQEFATAFAQUBMIUBMAUBBQE
+wBQEFATCFATAFATAFATEFATWFATAFAQUBMAUBBTCBBQEwBQEwRQEwBQEwBQEFATAFAQUBMAUBMIU
+BMAUBMAUBMIUBBQEwBQEFATCFATCFATCFATCFATAFAQUBMAUBBQEwBQEFATAFAQUwgQUBMIUBMcU
+wf4AAAA0wBTANMAUwDTAFMEsBP399iwUwgTW-hgoUMEEwBTBBBTBBMAUBMAUBMEUwATAFMAEwBQE
+whTCBNkUwQTAFMAEwRTBBMAUwQQUBMAUBMAUwQQUBMAUBMEUwAQUwQTYFMEEwBTABMAUwgQUBMAU
+BMEUwATAFMAEwRTBBMAUwQQUwQTCFMEEFMEEwRTABMEUwQQUBMMUwQTAFMEEFATAFATAFMAEwBQE
+wBQEwBTABMAUwgTAFMEEFATDFATBFATA-gAAADTBFMI0whQ0LAT9-fYsFDTAFATz-hgoUAT9-f3j
+FATA-gAAADTAFMA0wBTANMAUNMAsBMD_GChQ-f3xBMEsNMH_AAAABP39-f3eFMI0whTD-vjw6Cz_
+_KjAwP4YKFD9-fEEwSz__PDowf4AAAD__KjA-f39-d4UNMAUwDTAFMA0wBT__PDowCz__KjAwP4Y
+KFD9-fEEwSz__PDowf4AAAD__KjA-f39-d4UNMEUwjTC-vjw6MAs-viowMD_GChQw-7AwMDA-hgo
+UMb_wMDA-hgoUP394QTBLP748OjB-gAAAP74qMDpLMQE-CzEBPwsxAT8LMQE2RQ0wBTANMAUwDTA
+FP748OjALP74qMDA-hgoUML_wMDA-hgoUMD_wMDA-hgoUMT_wMDAwP4YKFD9-eEEwSz__PDowf4A
+AAD__KjA6Cz_YECIwf74cKjB-kAoMP74qMD6LP5gQIjB-vhwqMH_QCgw-viowPos-mBAiMH__HCo
+wf5AKDD__KjA_iz_YECIwf74cKjB-kAoMP74qMDYFMI0whTC-vjw6MAs-viowMD_GChQwv7AwMD_
+GChQ-sDAwMD_GChQxf7AwMD_GChQ-f3hBMEs-vjw6MH_AAAA-viowOEsxf5gQIjB-vhwqML_QCgw
+-viowPMsxf5gQIjB-vhwqML_QCgw-viowPMsxf5gQIjB-vhwqML_QCgw-viowPMsxf5gQIjB-vhw
+qML_QCgw-viowNgUNMAUwDTAFMA0wBT__PDowCz__KjAwP4YKFDC-sDAwMD_GChQ-sDAwP4YKFDF
+-sDAwP4YKFD9-eEEwSz__PDowf4AAAD__KjA4Cz__HCozCz__KjA8iz__HCozCz__KjA8iz__HCo
+zCz__KjA8iz__HCozCz__KjA2BQ0wRTCNML__PDowCz__KjAwP4YKFDC-sDAwP4YKFDA-sDAwP4Y
+KFDF-sDAwP4YKFD9-eEEwSz_gHCY-vjw6Cz_AAAA-viowOD_QCgw-vhwqMws-viowPIs-vhwqMws
+-viowPIs-vhwqMws-viowPIs-vhwqMws-viowNgUNMAUwDTAFMA0wBT__PDowCz__KjAwP4YKFDC
+-sDAwP4YKFDA-sDAwP4YKFDF-sDAwP4YKFD9-eEEwSz_gHCYwP748Oj_AAAA-viowOD_QCgw-vhw
+qMws-viowPIs-vhwqMws-viowPIs-vhwqMws-viowPIs-vhwqMws-viowNgUwjTCFML__PDowCz_
+_KjAwP4YKFDD-sDAwMD_GChQwf7AwMD_GChQwf7AwMDB-hgoUP394ATBLP6AcJj__PDowP4AAAD_
+_KjA4P5AKDD__HCozCz__KjA4P4YKFAEzyz__HCozCz__KjA8iz__HCozCz__KjA8iz__HCozCz_
+_KjA2P4AAAA0wBTANMAUwDTAFP748OjALP74qMDA-hgoUP398QTBLP6AcJj__PDowP4AAAD__KjA
+4P5AKDD__HCozCz__KjA3-4YKFD__PDoFP74qMDOLP74cKjMLP74qMDyLP74cKjMLP74qMDyLP74
+cKjMLP74qMDY-gAAADTBFMI0wv748OjALP74qMDA-hgoUP398QTBLP6AcJj__PDowP4AAAD__KjA
+4P5AKDD__HCozCz__KjA3-4YKFD__PDowBT__KjAzSz__HCozCz__KjA8iz__HCozCz__KjA8iz_
+_HCozCz__KjA2P4AAAA0wBTANMAUwDTAFP748OjALP74qMDA-hgoUP398QTBLP748OjB-gAAAP74
+qMDgLP74cKjMLP74qMDf-hgoUP748OjBFP74qMDMLP74cKjMLP74qMDyLP74cKjMLP74qMDyLP74
+cKjMLP74qMDY-gAAAMI0whTC-vjw6MAs-viowMD_GChQ-f3xBMEs-vjw6MH_AAAA-viowOAs-vhw
+qMws-viowN-_GChQ-vjw6MIU-viowMss-vhwqMws-viowPIs-vhwqMws-viowPIs-vhwqMws-vio
+wNj_AAAANMAUwDTAFMA0wBT__PDowCz__KjAwP4YKFD9-fEEwSz__PDowf4AAAD__KjA4Cz__HCo
+zCz__KjA3-4YKFD__PDowBTA-viowMws-vhwqMws-viowPIs-vhwqMws-viowPIs-vhwqMws-vio
+wNj_AAAANMEUwjTCFP748Ogs-viowP399iz__PDowRT__KjA4Cz__HCozCz__KjA4P4YKFDA-vjw
+6BT__KjAzCz__HCozCz__KjA8iz__HCozCz__KjA8iz__HCozCz__KjA2P4AAAA0wBTANMAUwDTA
+FDTALATB-hgoUMAEwBTBBMAUBMAUBMUUBMEUBNEUBMcUwATDFATGFMAE5xQEwxQE9yw0wf4AAAAE
+4Cz__HCozCz__KjA8iz__HCozCz__KjA8iz__HCozCz__KjA8iz__HCozCz__KjA2BTCNMIUwzQs
+BMD_GChQBMAUBBQEwBQEFATAFATFFATBFATRFATIFATDFATFFATpFAT9LP4AAAA0wBQE4SzMBPQs
+zAT0LMwE9CzMBNkUNMAUwDTAFMA0wBTBLATA-hgoUATCFATAFAQUBMAUBMQUwgQUwQTAFAQUwATA
+FMAEwRTBBBTBBMEUwATBFATBFMEExRQEwhTABMAUBBTABMUUwQTAFMAEwRTABMAUBBTABMAUwQQU
+wQTAFMAEwBTBBMEUwQTsLP4AAADCBP39-f3eFDTBFMI0whQ0LATA-hgoUATCFMEEwBQEwBQExRQE
+wRQEwBQEFMAEwRQEwBQEFATCFATAFAQUBMAUBMAUBMAUBMAUBMQUwgQUBMAUBBTABMYUBMIUBMAU
+BMIUBBTABMEUBMIUBMAUBMAUBMAUBMAUBBQEwBQE7Cz_AAAANMAUBP39-f3eFDTAFMA0wBTANMAU
+NMAsBMD_GChQBMIUBMIUBMAUBMUUBMEUBMAUBBQEwhTCBMAUwATAFATAFAQUBMAUBMAUBMAUBMAU
+BMUUBMEUBMAUBBQEyBTABMAUwgTAFMEEFATCFATCFATAFATAFATAFATAFAQUBMAUBOwsNMH_AAAA
+BP4YKFAExRTABNoUwATkFMAEwhQE_xTABMIUBNsUwATEFAThFATVFATBFMAEwRTABMAUBM3_AAAA
+wjTCFMM0LATA-hgoUATAFAQUBMIUBMAUBMUUBMEUBMAUBBQEwhQExRQEFATAFAQUBMAUBMAUBMAU
+BMAUBMUUBMEUBMAUBBQEyhQEFATCFATAFAQUBMIUBMIUBMAUBMAUBMAUBMAUBMAUwQTsLP4AAAA0
+wBQE-hgoUATEFATAFATYFATAFATiFATDFMAE_hQEwxTABNoUBMYUBOEUBNQUwATAFATAFAQUBMAU
+BBQEzf4AAAA0wBTANMAUwDTAFMEsBMH_GChQwATAFATDFMEExhTABBQEwBQEFATDFMEEFMEEwBQE
+wBQEwBTABMEUwATAFMEExRQEwhTABMAUBMcUwQTBFMEEwBTBBBQEwxTBBBQEwBQEFMEEFATAFATC
+FATsLP4AAADC-hgoUMAEwBTBBBQEwxTBBBQEFMAEwBTABMEUwATAFMEEwBQEwhTBBMEUwATAFATA
+FATAFMAEwBQEFMAExBTBBMAUBMIUBBQExRTBBMAUwQTBFMEEFMIEwBTABMAUwQTBFATAFMAEwBQE
+FMAExBTBBMAUBMIUBBQExRTBBMAUwQTBFMEEwBTBBMAUBMEUBMAUBBQEwBQE3BTBBBQEwBQEFMIE
+FMEExxQEwBQEFMAEFAQUwAQUBMAUBMr_AAAANMEUwjTCFDQsBP39xf4YKFDABO0s-gAAADTAFAT_
+GChQBBQEwxTABMAUBMIUwATBFATAFAQUBMAUBBQEwBQEwBTABMAUBMAUBBQEwBQEFATAFAQUBMAU
+BBTABMYUBMAUBBTBBMAUBBQExRQEwBQEFATAFAQUBMAUBBTCBMIUBBQEwBQEwBQEFATAFAQUwATG
+FATAFAQUwQTAFAQUBMUUBMAUBBQEwBQEFATAFAQUBMIUwgQUBMAUBBQEFATcFATAFAQUBMAUBBTC
+BBQEwBQExhQEwBTABBQEFMAEFAQUBBQEy-4AAAA0wBTANMAUwDTAFDTALAT9-fYsNMEUBP4YKFAE
+wBTABMMUBBQEwhQEwhTCBBTCBBQEwBQEwhQEFATAFAQUBMAUBBQEwBQEFMIEFATHFATAFAQUBMAU
+BBTCBMQUBMAUBBQEwBQEFATAFAQUBMAUBMAUwQQUBMAUBMAUBBTCBBQExxQEwBQEFATAFAQUwgTE
+FATAFAQUBMAUBBQEwBQEwBTABMEUBMIUwATAFMAE3RQEwBQEFATAFAQUBMAUBBQEwBQExhQEwBQE
+wBQEFATAFAQUwATM-gAAAMI0whTDNCwE-f32LBQ0wBQE-hgoUATCFAQUBMAUBBQEwhQEwhQEwhQE
+whQEwBQEFATAFAQUBMAUBBQEwBQEFMIEFATCFATHFMEEwBQEwBQEwRQExRTBBMAUBMAUBMAUwQQU
+BMAUBBQEwBQEFMEEwBTABBQEwhQExxTBBMAUBMAUBMEUBMUUwQTAFATAFATAFMEEwhQEwBQEwRQE
+wBQEFAQUBNwUBMAUBBQEwBQEFATAFAQUwQTHFATAFATAFAQUBMAUBBQEFATL-gAAADTAFMA0wBTA
+NMAUwSwEwP4YKFD9-fEEwSz_AAAAwv4YKFDABBTBBMEUwATBFMEEFATDFMEEwBTBBBQEwBQEwBTA
+BMAUBMAUBMAUwATAFMIEwBTBBBQEwxQEwRQEwxTABMIUBMEUBMEUBMIUBMAUBMIUBBQEwBQEwBTB
+BBQEwhTABMAUwQQUBMMUBMEUBMMUwATCFATBFATBFATCFATAFATCFAQUwQTBFATBFATAFAQUBMAU
+BNwUwQTAFMEEFATAFAQUBMIUwgTAFMEEwBTABMEUwATAFATAFATK-gAAADTBFMI0whQ0LATA-hgo
+UP398QTBLP4AAAA0wBQE-cn_GChQBNEUBMgUwATKFATUFATRFATIFMAE-cEUBOb_AAAANMAUwDTA
+FMA0wBQ0wCwEwP4YKFD9-fEEwSw0wf4AAAAE-f39-d4UwjTCFMM0LATA-hgoUMP_wMDAwP4YKFDE
+-sDAwML_GChQ-f3gBMEs-gAAADTAFAT9-f393hQ0wBTANMAUwDTAFMEsBMD_GChQwv7AwMD_GChQ
+wP7AwMD_GChQw-7AwMD_GChQ-f3jBMEs-gAAAMIE-f39-d4UNMEUwjTCFDQsBMD_GChQwv7AwMD_
+GChQ-sDAwMD_GChQw-7AwMD_GChQ-f3jBMEs-gAAADTAFATpLMQE-CzEBPwsxAT8LMQE2RQ0wBTA
+NMAUwDTAFDTALATA-hgoUML_wMDAwP4YKFD_wMDA-hgoUMP_wMDAwf4YKFD9-eEEwSw0wf4AAAAE
+6Cz_YECIwf74cKjB-kAoMP74qMD6LP5gQIjB-vhwqMH_QCgw-viowPos-mBAiMH__HCowf5AKDD_
+_KjA_iz_YECIwf74cKjB-kAoMP74qMDYFMI0whTDNCwEwP4YKFDC-sDAwP4YKFDA-sDAwP4YKFDG
+-sDAwP4YKFD9-eAEwSz_AAAANMAUBOEsxf5gQIjB-vhwqML_QCgw-viowPMsxf5gQIjB-vhwqML_
+QCgw-viowPMsxf5gQIjB-vhwqML_QCgw-viowPMsxf5gQIjB-vhwqML_QCgw-viowNgUNMAUwDTA
+FMA0wBTBLATA-hgoUML_wMDA-hgoUMD_wMDA-hgoUMb_wMDA-hgoUP394ATBLP4AAADCBOAs-vhw
+qMws-viowPIs-vhwqMws-viowPIs-vhwqMws-viowPIs-vhwqMws-viowNgUNMEUwjTCFDQsBMD_
+GChQw-7AwMDA-hgoUMH_wMDA-hgoUMD_wMDAwf4YKFD9-eEEwSz_AAAANMAUBOAs-vhwqMws-vio
+wPIs-vhwqMws-viowPIs-vhwqMws-viowPIs-vhwqMws-viowNgUNMAUwDTAFMA0wBQ0wCwEwP4Y
+KFD9-fEEwSw0wf4AAAAE4Cz__HCozCz__KjA8iz__HCozCz__KjA8iz__HCozCz__KjA8iz__HCo
+zCz__KjA2BTCNMIUwzQsBMD_GChQ-f3xBMEs-gAAADTAFATgLP74cKjMLP74qMDyLP74cKjMLP74
+qMDyLP74cKjMLP74qMDyLP74cKjMLP74qMDYFDTAFMA0wBTANMAUwSwEwP4YKFD9-fEEwSz_AAAA
+wgTgLP74cKjMLP74qMDyLP74cKjMLP74qMDyLP74cKjMLP74qMDyLP74cKjMLP74qMDYFDTBFMI0
+whQ0LATA-hgoUP398QTBLP4AAAA0wBQE4Cz__HCozCz__KjA8iz__HCozCz__KjA8iz__HCozCz_
+_KjA8iz__HCozCz__KjA2BQ0wBTANMAUwDTAFDTALATA-hgoUP398QTBLDTB-gAAAATgLP74cKjM
+LP74qMDyLP74cKjMLP74qMDyLP74cKjMLP74qMDyLP74cKjMLP74qMDYFMI0whTDNCwE-f32LBQ0
+wBQE4Cz__HCozCz__KjA8iz__HCozCz__KjA8iz__HCozCz__KjA8iz__HCozCz__KjA2BQ0wBTA
+NMAUwDTAFMEsBP399iwUwgTgLP74cKjMLP74qMDyLP74cKjMLP74qMDyLP74cKjMLP74qMDyLP74
+cKjMLP74qMDYFDTBFMI0whQ0LAT9-fYsFDTAFATgLP74cKjMLP74qMDyLP74cKjMLP74qMDyLP74
+cKjMLP74qMDyLP74cKjMLP74qMDYFDTAFMA0wBTANMAUNMAsBP399iw0wRQE4Cz__HCozCz__KjA
+8iz__HCozCz__KjA8iz__HCozCz__KjA8iz__HCozCz__KjA2BTCNMIUwzQsBP399iwUNMAUBOEs
+zAT0LMwE9CzMBPQszATZFDTAFMA0wBTANMAUwSwE-f32LBTCBP39-f3eFDTBFMI0whQ0LAT9-fYs
+FDTAFAT9-f393hQ0wBTANMAUwDTAFDTALAT9-fYsNMEU-hgoUATFFATDFATDFATFFATCFMEEyhQE
+whQE1BQExBQExBQExxQExRQEwhTBBMIUBMsUBN8UwATQFMAEzRTABNAUwATDFATLFATZFATD-gAA
+AMI0whTDNCwE-f32LBQ0wBT_GChQBMUUBMMUBMsUBMIUBMAUBMkUBMIUBNQUBMQUBNYUBMIUBMAU
+BM8UBN4UBNEUBNAUBNEUBMMUBOcUBMP_AAAANMAUwDTAFMA0wBTBLAT9-fYsFML_GChQBMEUwATA
+FATAFAQUwgTAFMAEwRTBBBQEwBQEFATAFATAFMAEwRTBBBTBBMAUwQTBFMAEwRTABMAUBBTABMAU
+wQTEFMEEwRTABMAUwQTBFMAEwRTBBBQEwBQEFATAFATAFMAEwRTBBMAUwATAFMIEFAQUwATAFMAE
+wBTBBMkUwQTAFATBFATAFATFFMEEwBQEwRQEwBQEyRQEwRTABMAUBMAUBMAUwATCFATBFMEEwBTA
+BMEUwQTAFMAEwRTBBBTBBMEUwATAFAQUwATEFMEEwf4AAAA0wRTCNMIUNCwE-f32LP748OjBFP4Y
+KFD__KjAwxQEFAQUBMEUBMMUBMAUBMIUBBQEwBQEwBQEwhQEFATCFATAFAQUBMAUBBQEwBQEwhQE
+FMAEwRQEwBQExBQEwBQEwRQEwBQEwBQEwRQEwBQEwhQEFATAFMEEwhQEwBQEwhQEwBQEwBQEwRTA
+BMEUBMAUBBQEwBQExxQEwBQEFMIEFATAFATEFATAFAQUwgQUBMAUBMkUBMAUBMAUBBQEwBQEFATA
+FATBFATAFATAFAQUBMAUBBQExBQEwBQEwBQEFATAFAQUBMAUBBTABMYUBMAUBMD_AAAANMAUwDTA
+FMA0wBQ0wCwE-f32LP748OjBFP4YKFD__KjAwRTBBBTABMIUBMMUBMEUwATAFMAEwRQEwBQEwBTB
+BMAUwATAFATAFAQUBMAUBBQEwBQEwBTBBBQEwhQEwBQExBQEwBQEwRQEwBQEwBQEwRQEwRTABMAU
+wATBFATEFATAFATCFATAFATAFATBFATCFATAFAQUBMAUBMcUBMAUBMAUBMIUwATFFATAFATAFATC
+FMAEyhQEwBTCBBQEwBQEFMIEwRQEwBQEwBQEFMIEwBTABMIUBMAUBMAUBBQEwBQEFMIEFATHFATA
+FATA-gAAAMI0whTDNCwE-f32LP748OjBFP4YKFD__KjAwBQEwBQEFAQUBMEUBMMUBMMUBBQEFATA
+FATAFAQUBMAUBMIUBBQEwBQEFATAFAQUBMAUBBQEwBQEFATCFATAFATEFATAFATBFATAFATAFATB
+FATDFAQUBBQEwBQExBQEwBQEwhQEwBQEwBQEwRQEwhQEwBQEFATAFATIFMEEwBQEwRQEwBQExRTB
+BMAUBMEUBMAUBMkUBMAUBMIUBBQEwBQExBQEwBQEwBQEFATFFATBFATBFMEEFATAFAQUBMIUBMcU
+BMAUBMD_AAAANMAUwDTAFMA0wBTBLAT9-fYs-vjw6MEU-hgoUMD__KjAwBTBBBQEwBQEwRTABMAU
+wQQUwQTAFATAFAQUwQTBFMEEFMEEwBQEwBQEFMEEwRTABMEUwQQUBMMUwQTAFATBFMEEwRTBBBQE
+wBQEwBTBBBTBBMAUBMAUBBQEwxTBBMAUwQTAFMAEwhTABBQEwxTABMAUBMAUBMoUBMAUBMEUBMAU
+BMAUBMQUBMAUBMEUBMAUBMkUwATAFMEEFMAEwhTBBMEUwATAFMEEwBTBBBTBBMEUwQTCFAQUBMAU
+BMAUwQQUBMMUBMEUwQTB-gAAADTBFMI0whQ0LAT9-fYs-vjw6MEU-viowP395P4YKFDABNAUwAT9
+whTABNr_AAAANMAUwDTAFMA0wBQ0wCwE-f32LP748OjBFP74qMD9-f393hTCNMIUwzQsBP399iz_
+_PDowP6AcJgEFP74qMD9-f393BTANMAUwDTAFMA0wBTB-kAoMAT9-fYs-oBwmP748OgsBMAU-f39
+-d00whTCNMIUNP5AKDD__KjA-f32LP6AcJj__PDoLATALATEFDTAFMA0wBTANMAUwDTAFATELATA
+LATALMEEwCzABMAsBMAsBCwEwCwELATALATALMEELATCLATALATEFDTAFMAExCwEwCwELATCLATA
+LAQsBCwELATALATBLATALATALMAEwCwEwCwELATALAQsBMMsBMYUNMAEyiwExywE0CwEzCwExhQ0
+BMQsBMAsBCwEwCwELAQsBCwELATALATALATALATALATALMEELATALATALMAExTQUwDTAFMA0wBTA
+NMAUNMD_QCgw-viowP399iz_gHCY-vjw6CwELATFFMI0whTCNMIExCwEwCwELATALATCLAQsBMAs
+BCwEwCwELATALAQsBMAsBCwEwiwEwCwExBTCNATFLMEELATCLATALAQsBCwELATALATBLATALATC
+LAQswQTALATALAQsBMMsBMYUwQTFLMEELMIEwCzABMAswgQswATBLMEExCzCBMAswATBLMEELMIE
+xDTABMQsBMAsBCwEwCwELAQsBCwELATALATALATALATALAQsBMAsBCwEwCwEwiwExDTAFMI0whTD
+NP5AKDD__KjA-f32LP6AcJj__PDoLMAExhQ0wBTANMAUwDTAFMA0wBQExSzBBMAswQQswQTALATA
+LAQswQTBLMAEwSzBBCwEwyzBBMQUNMAUwATHLAQsBMMswATBLAQsBMIswAQsBMAsBCzBBMAsBMMs
+wQQsBMQswATEFDTABMQsBMMsBMQsBMAsBMIsBMAsBMgsBMEsBMAsBCwEwywExhQ0BMQswQTBLMAE
+wSwELATALATALATALMAEwCzABMEswQTALMEELMEExTQUwDTAFMA0wBTANMAUwf5AKDD__KjA-f32
+LP748OjKNMIUwjTCFMIE9jTCFATF-oBwmMAE3ywE1jTBBMUswATBLATCLMEEwCwEwiwEwCwEyCwE
+wSzCBMAswATBLATGFMAE9hTANMIUwjTCFDT_QCgw-viowP399iz__PDoyhQ0wBTANMAUwDTAFMA0
+wBQE9hQ0wBTABP3DFDTABMf_gHCYBMAsBMEsBMAsBMAsBMIsBMAsBMgsBMEsBMUsBMAsBMYUNAT2
+NBTANMAUwDTAFMA0wBQ0wP5AKDD__KjA-f32LP748OjKFMI0whTCNMIE9hTCNAT9wxTBBMT_gHCY
+wQTCLMAEwCzBBMEswAQswQTALMEExizABMAswQQswQTCLMAExDTABPY0wBTCNMIUwzT_QCgw-vio
+wP399iz__PDoyRTANMAUwDTAFMA0wBTANMAUwAT0FMA0wBTANAT9wRTANMAE-cEUNMAE9DTAFMA0
+wBTANMAUwDTAFMEs-viowP399iwUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIU
+wjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0wf748Oj9wRTCNMIUwjTC
+FMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whQ0LP74qMD9-fYsFDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA-vjw6P3BFDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUNMAs-viowP39
+9iw0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIU
+wjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwv748Oj9FDTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTC
+FMI0whTCNMIUwzTALP74qMD9-fQsFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwyz9-fQ0wBTCNMIUwjTCFMI0whTCNMIU
+wjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTC
+NMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0
+whTCNMIUwjTCFMI0whTCNMIUNMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBQ0whTCNMIUwjTCFMI0whTC
+NMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0
+whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTC
+FMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIU
+wjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMM0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMM0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0
+whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTC
+FMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIU
+wjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTC
+NMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUNMIU
+wjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTC
+NMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0
+whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTC
+FMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIU
+wjTCFMI0whTDNMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wP4YKFDO-gAAAMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDQsyBQ0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMM0whTCNMIUwjTCFMI0whTB-hgoUP4gYLDB-vjw6MYkwRT_AAAANMIU
+wjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTA-hgoUMQ0wv4AAADCNMIUwjTCFMI0whTCNMIUwjTC
+FMI0wf4YKFDONP4AAADCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwP4YKFDE-gAAAMI0whTC
+NMIUwjTCFMI0whTCNMIUwjTCFMI0LP5gQIjI-kAoMBTBNMIUwjTCFMI0whTCNMIUwjTCFMI0whTC
+NMIUwjTA-hgoUMQ0wv4AAADCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNML_GChQxDTA-gAAAMI0
+whTCNMIUwjTCFMI0whQ0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA-hgoUCTBBMYk
+wRT_AAAAwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTA-hgoUDTB-viowMEUNMD_AAAAwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMD_GChQ-vjw6MwU-gAAAMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwP4YKFA0wf74qMDBFDTA-gAAAMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFCz_YECIwP74cKjGLMD_QCgwNBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMD_
+GChQNMH__KjAwRQ0wP4AAADANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTA-hgoUDTBBMEU-gAAAMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUNMIUwjTCFMI0whTCNMIUwjTB-hgoUCTD-vjw6MQkwRQ0-gAAAMI0whTCNMIUwjTCFMI0whTC
+NMIUwjTCFMD_GChQxTTB-viowMIU-gAAAME0whTCNMIUwjTCFMI0whTCNMIUwjTCFMH_GChQ-vjw
+6P6AcJjKBBT_AAAANMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMD_GChQxTTB-viowMIUNMH_AAAA
+wjTCFMI0whTCNMIUwjTCFMI0whTCNMH_QCgw-mBAiMH__HCoLAQswgQswf5AKDA0FMI0whTCNMIU
+wjTCFMI0whTCNMIUwjTCFMD_GChQxTTB-viowMIU-gAAAME0whTCNMIUwjTCFMI0whTCNMIUwjTC
+FML_GChQxTTBBMIU-gAAADTCFMI0whTCNMIUwjTCFMM0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTA-hgoUCTD-vjw6MQkwRT_AAAAwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwP4YKFD__KjAzBQ0wP4AAADANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wP4YKFD__PDo-oBwmMoEFP4AAADANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA-hgoUP74qMDMFDTA-gAAAMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA-kAoMP5gQIjB-vhwqMYs
+wf5AKDAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwP4Y
+KFD__KjAzBQ0wP4AAADANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wP4YKFAEzBT_AAAAwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTDNMIUwjTCFMI0
+whTCNMIUwf4YKFAkwf748OjGJMEU-gAAADTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjT_GChQ-vio
+wMwUNMH_AAAAwjTCFMI0whTCNMIUwjTCFMI0whTCNMH_GChQ-vjw6P6AcJjKBBQ0-gAAAMI0whTC
+NMIUwjTCFMI0whTCNMIUwjTCFP4YKFD__KjAzBT_AAAAwTTCFMI0whTCNMIUwjTCFMI0whTCNMIU
+wf5AKDD_YECIwf74cKjALAQswQQswf5AKDAUNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNP4YKFD_
+_KjAzBQ0wf4AAADCNMIUwjTCFMI0whTCNMIUwjTCFMI0wf4YKFAEzBQ0-gAAAMI0whTCNMIUwjTC
+FMI0whQ0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA-hgoUCTB-vjw6MYkwRT_AAAA
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwP4YKFD__KjA
+zBQ0wP4AAADANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wP4Y
+KFD__PDo-oBwmMoEFP4AAADANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTA-hgoUP74qMDMFDTA-gAAAMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTA-kAoMP5gQIjB-vhwqMYswf5AKDAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwP4YKFD__KjAzBQ0wP4AAADANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wP4YKFAEzBT_AAAAwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBQ0whTCNMIUwjTCFMI0whTCNMH_GChQJP748OjEJMAEwCTBFDT_
+AAAAwjTCFMI0whTCNMIUwjTCFMI0whTCNMIU-hgoUP74qMDMFP4AAADBNMIUwjTCFMI0whTCNMIU
+wjTCFMI0whTB-hgoUP748Oj_gHCYygQU-gAAADTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjT_GChQ
+-viowMwUNMH_AAAAwjTCFMI0whTCNMIUwjTCFMI0whTCNMH_QCgw-mBAiMH__HCowCwELMEELMH_
+QCgwNBTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whT_GChQ-viowMwU-gAAAME0whTCNMIUwjTCFMI0
+whTCNMIUwjTCFMH_GChQBMwU-gAAADTCFMI0whTCNMIUwjTCFMM0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTA-hgoUCT__PDoxCTABMAkwRT_AAAAwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwP4YKFD__KjAzBQ0wP4AAADANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wP4YKFD__PDo-oBwmMoEFP4AAADANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA-hgoUP74qMDMFDTA
+-gAAAMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA-kAoMP5g
+QIjB-vhwqMYswf5AKDAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwP4YKFD__KjAzBQ0wP4AAADANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wP4YKFAEzBT_AAAAwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTD
+NMIUwjTCFMI0whTCNMIUwf4YKFAk-vjw6MIkxxT_AAAANMIUwjTCFMI0whTCNMIUwjTCFMI0whTC
+NP4YKFD__KjAzBQ0wf4AAADCNMIUwjTCFMI0whTCNMIUwjTCFMI0wf4YKFD__PDozBQ0-gAAAMI0
+whTCNMIUwjTCFMI0whTCNMIUwjTCFP4YKFD__KjAzBT_AAAAwTTCFMI0whTCNMIUwjTCFMI0whTC
+NMIUwSz_YECIwf74cKgsBCzCBCzB-kAoMBQ0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0-hgoUP74
+qMDMFDTB-gAAAMI0whTCNMIUwjTCFMI0whTCNMIUwjTB-hgoUATMFDT_AAAAwjTCFMI0whTCNMIU
+wjTCFDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMD_GChQJP748OjCJMcU-gAAAMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMD_GChQ-viowMwU
+NMD_AAAAwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMD_GChQ
+-vjw6MD_uJjYxwTBFP4AAADANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTA-hgoUP74qMDMFDTA-gAAAMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTALP5gQIjB-vhwqMYswf5AKDAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwP4YKFD__KjAzBQ0wP4AAADANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wP4YKFAEzBT_AAAAwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBQ0whTCNMIUwjTCFMI0whTCNMH_GChQJP748OjKJBQ0-gAAAMI0whTC
+NMIUwjTCFMI0whTCNMIUwjTCFP4YKFD__KjAzBT_AAAAwTTCFMI0whTCNMIUwjTCFMI0whTCNMIU
+wf4YKFD__PDowBzHBMAcFP4AAAA0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0-hgoUP74qMDMFDTB
+-gAAAMI0whTCNMIUwjTCFMI0whTCNMIUwjTBLP5gQIjB-vhwqCwELMIELMH_QCgwNBTCNMIUwjTC
+FMI0whTCNMIUwjTCFMI0whT_GChQ-viowMwU-gAAAME0whTCNMIUwjTCFMI0whTCNMIUwjTCFMH_
+GChQBMwU-gAAADTCFMI0whTCNMIUwjTCFMM0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTA-hgoUCT__PDoyiQU-gAAAMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMD_GChQ-viowMwUNMD_AAAAwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMD_GChQ-vjw6MocFDT_AAAAwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwP4YKFD__KjAzBQ0wP4AAADANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wCzA-mBAiMD__HCoxizA-kAoMMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwP4YKFD__KjAzBQ0wP4A
+AADANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wP4YKFAEzBT_
+AAAAwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTDNMIUwjTCFMI0whTCNMIUwf4YKFAk
+wf748OjIJBT_AAAANMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNP4YKFD__KjAzBQ0wf4AAADCNMIU
+wjTCFMI0whTCNMIUwjTCFMI0wf4YKFAcyhQ0wf4AAADCNMIUwjTCFMI0whTCNMIUwjTCFMI0whT_
+GChQBMwU-gAAAME0whTCNMIUwjTCFMI0whTCNMIUwjTCFMIswP5gQIjI-kAoMMAUwDTCFMI0whTC
+NMIUwjTCFMI0whTCNMIUwjT_GChQBMwUNMH_AAAAwjTCFMI0whTCNMIUwjTCFMI0whTCNMH_GChQ
+BMwUNP4AAADCNMIUwjTCFMI0whTCNMIUNMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wP4YKFAkwf748OjIJBT_AAAAwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwP4YKFD__KjAzBQ0wP4AAADANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wP4YKFDL-gAAADTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMD_GChQBMwUNMD_AAAAwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwCzKNMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwP4YKFAEzBQ0wP4AAADANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wP4YKFAEzBT_AAAAwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBQ0whTCNMIUwjTCFMI0whTCNMH_GChQzjT_AAAAwjTCFMI0whTCNMIUwjTCFMI0
+whTCNMIUwP4YKFDM-gAAAMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTC
+NMIUwjTCFMI0whTCNMIUwjTA-hgoUMw0wv4AAADCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTALMg0
+whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTA-hgoUMz_AAAAwjTCFMI0whTCNMIUwjTCFMI0whTC
+NMIUwv4YKFDM-gAAAMA0whTCNMIUwjTCFMI0whTDNMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTDNMIU
+wjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTC
+NMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0
+whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTC
+FMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIU
+wjTCFMI0whQ0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0wBTA
+NMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDTAFDTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTC
+FMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIU
+wjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTC
+NMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0
+whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwjTCFMI0whTCNMIUwzTAFMA0wBTANMAUwDTA
+FMA0wBTANMD__PDo5TQUwAT9-cwUwDTAFMA0wBTANMAUwDTAFATmFDTAFMA0wBTANMAUwDTAFMA0
+wBTANMAUwDTABOU0FMA0wBTANMAUwDTAFMA0wBTANMAUwDQE6xTANMAUwDTAFMA0wBTANMAUwDTA
+FATqFDTAFMA0wBTANMAUwDTAFMA0wBTDNMIUwjTCFMI0wATnNAT9-c40whTCNMIUwQToNMEUwjTC
+FMI0whTCNMAE5zQUwjTCFMI0whTCNATtNMIUwjTCFMI0wQTsNMEUwjTCFMI0whQ0wBTANMAUwDTA
+FMA0wBTANMAUwDQE5xQE-f3OFDTAFMA0wBTANMAUwDTABOg0wBTANMAUwDTAFMA0wBTANMAUwDTA
+FMA0BOcUwDTAFMA0wBTANMAUwDTAFMA0wBTABO0UNMAUwDTAFMA0wBTANMAUwDTABOw0wBTANMAU
+wDTAFMA0wBTANMAUNMIUwjTCFMI0whTABOcUBP39zhTCNMIUwjTBBOgUwTTCFMI0whTCNMIUwATn
+FDTCFMI0whTCNMIUBO0UwjTCFMI0whTBBOwUwTTCFMI0whTDNMAUwDTAFMA0wBTANMAUwDTAFMA0
+BMT_gHCYwQTFLATNLATGFATELMEEwSwEwSwEyyzABMUswQTGLATCLATPLMEEwCwExyzABMAsBMAs
+wATILATeFDTAFMA0wBTANMAUwDTABNQsBNE0wBTANMAUwDTAFMA0wBTANMAUwDTAFMA0BNQsBNAU
+wDTAFMA0wBTANMAUwDTAFMA0wBTABMQsBOYUNMAUwDTAFMA0wBTANMAUwDTABM8sBMgsBMEsBMs0
+wBTANMAUwDTAFMA0wBTANMAUwzTCFMI0whTCNMAExCwEwCwExCwEzSwExjQExCwEwCwExCwEzCwE
+xSwEwCwExSwE1CwEwCwELATGLATGLATILATeNMIUwjTCFMEE1CwE0TTBFMI0whTCNMIUwjTABOc0
+FMI0whTCNMIUwjQExCwE5jTCFMI0whTCNMEEzywEzCwEyzTBFMI0whTCNMIUNMAUwDTAFMA0wBTA
+NMAUwDTAFMA0BMQsBMAsBMAswATALMEEwSzABMEswATALMIExBQExCwEwCwELMAEwCzCBCwEwCwE
+wCzABMEsBMUsBMAsBCwEwCwELMIELMAEwSzABMEswQTELATALAQsBMYsBMEswATBLATBLMAEwSzB
+BCwEwCwELMAELATALMEEwSzABMAsBCzABMQUNMAUwDTAFMA0wBTANMAExSzBBCwEwCwEwCzBBCzC
+BMAswATALMAELATFNMAUwDTAFMA0wBTANMAUwDTAFMA0wBTANATFLMAEwCzBBMAsBMAsBCzABMEs
+wATALATBLATEFMA0wBTANMAUwDTAFMA0wBTANMAUwATELMEEwCwELMAEwCzABMAsBMEsBMAswQTA
+LMAEwCwELMAExBQ0wBTANMAUwDTAFMA0wBTANMAExCwEwSwEwCzABMAswQTBLMEELMAEwCzCBMAs
+wATFNMAUwDTAFMA0wBTANMAUwDTAFDTCFMI0whTCNMIUwATELMEEwCwEwCwELATALAQsBMAsBCwE
+wCwEwCwExhQExCzBBMEsBMEsBMEsBMAsBMIsBMAsBMUsBMAsBCwEwCwEwCwEwiwEwCwEwCwELATH
+LATALATALATELMIEwCwEwSwEwCwEwCwELATALAQsBMAsBCwELAQsBCwEwCwELATALAQswATGFMI0
+whTCNMEExCwEwiwEwCwELATDLATBLATALAQsBCwELATEFME0whTCNMIUwjTCFMAExCwEwCwELATA
+LAQsBMAsBMAsBMAsBMAsBCwEwSwExBQ0whTCNMIUwjTCFATELATALAQswATBLATALAQsBMEsBCwE
+wiwEwCwELMAExhTCNMIUwjTCFMEExCwEwSwELATALAQsBMAsBCwEwywEwSwEwSwEwCwExBTBNMIU
+wjTCFMM0wBTANMAUwDTAFMA0wBTANMAUwDQExCwEwCwELMIELATALAQsBMAsBCwEwCwEwCwExhQE
+xCwEwCwEwCwEwSwEwSwEwCwEwCzBBMAsBMUsBMAsBCwEwCwEwCwEwiwEwCzCBMAswATFLATALAQs
+BMYsBMIsBMEsBMAswgQsBMAsBCwEwCwELAQsBCwELATALAQswgQsBMcUNMAUwDTAFMA0wBTANMAE
+xSzABMAsBMAsBMAswATBLATBLMIELAQsBCwExDTAFMA0wBTANMAUwDTAFMA0wBTANMAUwDQExCzC
+BCwEwCwELATALATALATALMIELAQsBCwExBTANMAUwDTAFMA0wBTANMAUwDTAFMAExCwEwCwELATC
+LATALAQsBCwELATALMAEwCzCBCwExxQ0wBTANMAUwDTAFMA0wBTANMAExCwELAQsBCzCBCwEwCwE
+wCzABMEsBMEsBMEswgTENMAUwDTAFMA0wBTANMAUwDTAFMM0whTCNMIUwjTABMQsBMAsBCwEwiwE
+wCwELATALAQsBMAsBMAsBMY0BMQsBMAsBMAsBMEsBMEsBMAsBCwEwCwEwCwExSwEwCwELATALATA
+LATCLATALATFLATELATALAQsBMYsBMIsBMEsBMAsBMIsBMAsBCwEwCwELATBLAQswQTALATCLATH
+NMIUwjTCFMEExywEwCzBBMIsBMAsBMEsBMIsBMEsBMQ0wRTCNMIUwjTCFMI0wATELATCLATALAQs
+BCwEwSwEwCwEwiwELAQsBMQ0FMI0whTCNMIUwjQExCwEwCwELATCLATALAQsBCwELATCLAQsBMIs
+BMc0whTCNMIUwjTBBMQsBCwELAQsBMIsBMAsBMIsBMAsBMEsBMEsBMc0wRTCNMIUwjT9-f39-f39
+9yTENM-_GChQwjTcFMk0xRTONMUUyDTK-kAoMMI0yxTJNMcUyTTIFMg0xhTINP39-egEwDTBBMA0
+xgTANMIENMYEwDTABMI0xCTAFMQkwDTMFCTCFMI0xRTHNMcU-vhwqMkUNMQUBMD__PDoyP74cKjA
+FDTEFP748OjIFDTKLP4oqPjALDTJFP74oADJFDTFFBzJFDTGFP6AcJjIFDTFFATG-sDAwP4YKFA0
+-f395gQ0wAQ0BDTABDTEBDTABDTABMA0xQQ0wAQ0wgQ0wyQUyCQ0yxQkxRQ0xBQExxQ0xRQEFP74
+cKjJFDTDFATA-vjw6BQExBQE-vhwqMAUNMMU-vjw6P4AoKDIBP4YKFA0yv5AKDD_KKj4wP5wMCg0
+wP5AKDDANMMUBBT__KAAwP746CDE-uBoABzAFDTDFAQUHMkUNMQU-oBwmP5gQIjGBMD_gHCYFDTE
+FATG-sDAwMD_GChQNP39-egENMIENMcENAQ0BDTIBDTCBDTC-iBgsBTB-vhwqMAUwATAFMEkNMoU
+JMUUNMMU-vjw6BTHBBQ0xRTA-vhwqMkUNMMUBMD__PDoFATEFAT__HCowBQ0whT__PDo-gCgoMoE
+-hgoUDTI-nAwKP74kGDB-nAwKDT_QCgw-gDgMMAsNMMUwBzA-vjoIDwcxRQ0xBTAHMX_YECIwBzA
+FDTDFP6AcJj_YECIxP748OjDLP6AcJgUNMMUBMb_wMDAwf4YKFA0-f395gQ0wgQ0wQQ0wgTANMAE
+NAQ0wQQ0wgTANMIENMP_IGCwFMD__HCo-viowDT__HCowDT__KjA-vhwqBTAJDTKFCTFFDTCFP74
+8OgUyQQUNMQU-vhwqMoUNMMUBMD__PDoyP74cKjAFDTCFP748Oj_AKCgxQTAFMEE-hgoUDTE-kAo
+MMA0wP5wMCj__JBgwf5wMCg0LP74kGDA-kAoMDTDFBzB-vjoIDwcxRQ0xBQcwf5gQIjFHMAUNMMU
+-oBwmP5gQIjCBMMsBCz_gHCYFDTDFATG-sDAwML_GChQNP398wTANOsENMIENMkENATCNMcENMAE
+NMP_IGCwFMD__HCo-viowME0wATB-vhwqBTAJDTKFMEkwhQ0whT__PDoFMIEFMQEFDTDFAQU-vhw
+qMkUNMMUBMD__PDowP74cKj__PDowv74cKj__PDowP74cKj__KjAFDTCFP748Oj_AKCgwP4YKFDD
+BMAU-gCgoMAE-hgoUDTD-kAoMP74AEjALP7gCKj_cDAowP74kGDA-nAwKDTALP74kGD_cDAoNMIU
+BBQcwP746CA8HMUUNMMUBBQcwP5gQIjAHMEswBzAFDTDFP6AcJj_YECIwQTBLMIELP6AcJgUNMMU
+BMX_YECIwATBFDT9-fEEwDTABDTGBMA0wQQ0xATFNM4ENMIENMMENMEENMAENMEENMEENMEENMAE
+NMAENMP_IGCwFMD__HCoNP74qMDA-vhwqMD__KjAwDT__HCoFMAkNMwUwiQUNMIU-vjw6BTDBBTD
+BBQ0xBTA-vhwqMkUNMMUBMD__PDowf74cKjC-vjw6MH__KjAwBQ0whT__PDo-gCgoMUEwBTBBP4Y
+KFA0wv5AKDD__ABI-viQYMAU-uAIqMAUwTTAFP6AcJgUNMQUwBzA-vjoIMQ8HMAUNMQUwBzA-mBA
+iMAcLBwswBzAFDTDFP6AcJj_YECIwQQsxAQs-oBwmBQ0wxQEwP5gQIjFBMEUNP398AQ0wgQ0BMA0
+wgQ0BDQENMAENMIENMUENM0EwjQEwjTFBMA0wgQ0xgTANMEENMP_IGCwFMH__HCoNATCNAQUwSQ0
+xSTANMEUwjTAFMA0whT__PDoFMQEFMIEFDTEFP74cKjKFDTDFATA-vjw6Mj__KjAwBQ0whT__PDo
+-gCgoMEEwBTFBP4YKFA0wv5AKDD__JBgwBTANMAU-oBwmBQ0wBQsFDTEFBzB-vjoIDwcxRQ0xBQc
+wf5gQIjAHMEswBzAFDTDFP6AcJj_YECIwQQsxAQs-oBwmBQ0wxQEwP5gQIjABMEswATBFDT9-fAE
+NMEENMEEwDTABDTABDTABDTABDTABDTABMM0wAQ09v4gYLAUwf74cKg0BMI0BBTBJDTEJP4oqPjA
+JMA0wRTBNMUU-vjw6BTDBBTDBBQ0wxQEFP74cKjJFDTDFATI-viowMH__HCoFDTCFP748Oj_AKCg
+wP4YKFAEwBTD-gCgoMAE-hgoUDTDFMD_gHCYFDTA-kAoMP5wMCj_QCgwNMD_cDAoFDTEFAQU-vig
+AMD__OggPBzFFDTDFAQUHMD_YECIxRzAFDTDFP6AcJj_YECIwQQsxAQs-oBwmBQ0wxQEwP5gQIjA
+BCwE-oBwmMAEwRQ0-f3wBMA0wAQ0wQTANMAENMAENMAENMAENMIENMMENPj_IGCwFMD__HCoNP74
+qMDA-vhwqMD__KjAwDT__HCoFMAkNMMk-iio_MMkwDTJFP748OgUwgQUxAQUNMQUwP74cKjJFDTD
+FATH-viowMH__HCowBQ0whT__PDo-gCgoMEEwBTFBP4YKFA0xBTA-nAwKDTALP6oUDD_cDAoNP5A
+KDD_qFAw-nAwKDTFFMD__KAAwP746CA8HMUUNMQUwBzA-mBAiMAcxRQ0wxT_gHCY-mBAiMEELMQE
+LP6AcJgUNMMUBMD_YECIwATB-oBwmMAEwRQ0-f3vBDQEwTTCBMA0wAQ0wAQ0wAQ0wAQ0wQQ0xQQ0
+xATANMEEwDTHBDTCBDTGBMA0wQTANMEEwDTABMI0wf4gYLAUwP74cKj__KjAwTTABMH__HCoFMAk
+NMIk-iio_MYkwDTHFP748OgUyQQUNMQU-vhwqMoUNMMUBMb__KjAwf74cKjBFDTCFP748Oj_AKCg
+ygT_GChQNMX_cDAo-qhQMP5AKDA0-nAwKP6oUDD_cDAoNCzA-kAoMDTFFP74oADB-vjoIDwcxRQ0
+xBQcyhQ0wxT_gHCY-mBAiMEELMQELP6AcJgUNMMUBMD_YECIwf6AcJjEBBQ0-f34BMA0wQQ0BDQE
+NMAENMQEwzTFBDTABDQENMAENMEENMEEwDTBBMA0wgQ0wAQ0wAQ0BDTABDQENMAENAQ0xf4gYLAU
+wP74cKj__KjANP74cKjANP74qMD__HCoFMAkNMQkwP4oqPjGJMA0xRT_uJjY-vjw6BTHBBwUNMMU
+BBT__HCoyBTANMMUBMAUyATAFDTCFP7AwMD__PDo-gCgoMgE-sDAwP4YKFA0xRTINMUUBBT__KAA
+yBTANMMUBBQcyBTANMMULP5gQIgEwSzCBMEs-oBwmBQ0wxQEwP5gQIjABP6AcJjEBBQ0-f3wBMc0
+wwTANMEENMQENMMENMcENMIENMEENMIENMIENMIENMMENAQ0BMA0wgQ0BDTFJBTB-vhwqMAUwATA
+FMEkNMYkwP4oqPjGJDTEFP64mNjA-vjw6MccwBQ0xBTKBBQ0wxT__HCowBTC-vjw6MMU-vhwqMAU
+NMIU-sDAwMD__PDoyBTA-hgoUDTDFMAEyBTANMQUygQUNMQUygQUNMMULATC-mBAiMEEwiz_gHCY
+FDTDFATFLMAEwRQ0-f39zwQ0yQQ0wgQ0wQQ0wwQ0wgQ0wQQ0wwQ0wATANAQ0wQQ0wATBNMQkFMgk
+NMkkwP4oqPjDJDTGFP64mNjJFDTFFMAEyP74cKgUNMMUBMAUwv748OjDFP74cKjAFDTDFP7AwMDK
+-hgoUDTEFP748OgUwQTA-qhQMP5wMCg0LP5AKDAEFDTEFMAEyP74oAAUNMQUwATIHBQ0xBT_gHCY
+BMD_YECIwwTALP6AcJgUNMQUBMUswATBFDT9-f3aBDTCBDTCBDTDBDTCBDTBBDTCBDTBBDTABDTA
+BDTEBDTEJMAUxCTANMwkwP4oqPjAJDTIFP64mNjHFDTHFP74cKjIFDTEFATAFML__PDowxT__HCo
+FDTFFP7AwMDI-hgoUDTEFP748Og0wP5wMCj_QCgwBMD_qFAw-nAwKP5AKDD_cDAoNMAEFDTEFP74
+oADIFDTGFBzIFDTGFP6AcJjIFDTFFATKFDT9-f3ZBDTCBDTCBDTEBDTCBDTABDTCBDTCBDTABDQE
+NMUENMYkxDTQJMA0yhTHNMkUyDTFFMw0xxTINMUUBDTA-kAoMP5wMCgEwP6oUDD_cDAo-kAoMMA0
+wAQUNMUUyDTIFMg0yBTINMYUzDT9-f3ZBMI0BMI0BDTDBME0wATBNAQ0wgTCNMAEwDTABMI0BME0
+-f39-f39-e4AAAAAAAAAAQ==
+:: map/.info.pod
+--[[pod,created="2025-11-24 23:32:11",modified="2025-12-14 19:08:39"]]
+:: map/0.map
+b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTAxLTE3IDEwOjM1OjQ4Iixtb2RpZmllZD0iMjAyNS0w
+MS0xNyAxMDozNzo0NCIscmV2aXNpb249MV1dbHo0AFQAAABEEAAA8Ah7e2JtcD11c2VyZGF0YSgi
+aTE2IiwzMgMALyIwAQD--------------------7oSIpLHBhbl94PTAIANJ5PTAsdGlsZV9oPTE2
+CgBgdz0xNn19
+:: patch/.info.pod
+--[[pod,created="2025-11-24 23:32:11",modified="2025-12-14 19:08:39"]]
+:: sfx/.info.pod
+--[[pod,created="2025-11-24 23:32:12",modified="2025-12-14 19:08:39"]]
+:: sfx/0.sfx
+b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTA3LTMxIDA4OjMwOjI4Iixtb2RpZmllZD0iMjAyNS0w
+Ny0zMSAwODozMDoyOCIscmV2aXNpb249MF1dbHo0AKAAAAALCgAA-zBweHUAAygAAAQABA9AEAIO
+AAGgASACoA4ADxAADfDKAQIDQA8PkAQFBgdADJAICQoLQAyQDwwPDQ8ODEAM8P8BAOv-J6oBEAYP
+MBABIAEgAfAAAhACDhABIA8hIAEwD0Dwww8oD--wxg-4Cg--D4AP9w8NAfAJARAGDjAA------_9
+H-8BAKzPyA9AAA8QQP--sPD-AQD-6lD-----KQ==
+:: utils/.info.pod
+--[[pod,created="2025-11-24 23:32:12",modified="2025-12-14 19:08:39"]]
+:: [eoc]
