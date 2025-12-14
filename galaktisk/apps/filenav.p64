@@ -2057,7 +2057,7 @@ startPath="/"
 settingsLocation=fullpath("embed/settings.lua")
 unpackCartLocation=fullpath("utils/unpack.lua")
 readmeLocation=fullpath("readme.txt")
-zepsFilenavLocation=fullpath("/system/zep/filenav.p64")
+zepsFilenavLocation=fullpath("/system/zep/apps/filenav.p64")
 
 include "debug.lua" --i hate you
 include "auto.lua" --fully zep
@@ -2223,10 +2223,6 @@ else
 	create_process("/system/zep/apps/filenav.p64",_env)
 	exit()
 end
-:: patch/runpatch.lua
---[[pod_format="raw",created="2025-11-24 20:22:11",modified="2025-11-24 20:31:06",revision=9]]
-cp("/appdata/galaktiskFilenav/filenav.p64/patch/main.lua","/system/apps/filenav.p64/main.lua")
-exit()
 :: readme.txt
 --[[pod_format="raw",created="2025-11-22 19:46:54",modified="2025-11-24 22:00:49",revision=44]]
 
@@ -2747,11 +2743,11 @@ store_metadata(_env.unpacklocation,meta)
 notify("Unpacked to ".._env.unpacklocation.."!")
 exit()
 :: .info.pod
---[[pod,author="Astralsparv",bbs_id="galaktisk_filenav-11",created="2025-11-19 20:31:48",galaktisk=true,icon=userdata("u8",16,16,"0000000000000000000000000000000000000000000000000000000000000000000000000000c1c1c1c10000000000000000000000c1dedec1c1c1c1000000000000c1c1c1dedec1dedec1c1c1c1000000c1d7d7c1c1c1dedec1dededed7c10000c1d7c1d7d7c1c1c1dededed7d7c10000c1d7c1d7c1d7d7d7d7d7d7d7d7c10000c1d7c1d7c1d7c7c7c7c7c7c7d7c10000c1d7c1d7c1d7c7c7c7c7c7c7d7c10000c1d7c1d7c1d7d7d7d7d7d7d7d7c1000000c1c1d7c1d7d7d7d7d7d7d7d7c10000000000c1c1d7d7d7d7d7d7d7d7c100000000000000c1c1c1c1c1c1c1c100000000000000000000000000000000000000000000000000000000000000000000"),modified="2025-12-14 19:08:39",notes="Galaktisk Distribution Release version.\n/appdata/galaktiskFilenav/",runtime=24,sandbox=false,title="Galaktisk Filenav",version="1.0g",workspaces={{location="main.lua#24",workspace_index=1},{location="helper.lua#13",workspace_index=1},{location="env.lua",workspace_index=1},{location="patch/main.lua#23",workspace_index=1}}]]
+--[[pod,author="Astralsparv",bbs_id="galaktisk_filenav-11",created="2025-11-19 20:31:48",galaktisk=true,icon=userdata("u8",16,16,"0000000000000000000000000000000000000000000000000000000000000000000000000000c1c1c1c10000000000000000000000c1dedec1c1c1c1000000000000c1c1c1dedec1dedec1c1c1c1000000c1d7d7c1c1c1dedec1dededed7c10000c1d7c1d7d7c1c1c1dededed7d7c10000c1d7c1d7c1d7d7d7d7d7d7d7d7c10000c1d7c1d7c1d7c7c7c7c7c7c7d7c10000c1d7c1d7c1d7c7c7c7c7c7c7d7c10000c1d7c1d7c1d7d7d7d7d7d7d7d7c1000000c1c1d7c1d7d7d7d7d7d7d7d7c10000000000c1c1d7d7d7d7d7d7d7d7c100000000000000c1c1c1c1c1c1c1c100000000000000000000000000000000000000000000000000000000000000000000"),modified="2025-12-14 19:19:59",notes="Galaktisk Distribution Release version.\n/appdata/galaktiskFilenav/",runtime=24,sandbox=false,title="Galaktisk Filenav",version="1.0g",workspaces={{location="main.lua#24",workspace_index=1},{location="helper.lua#13",workspace_index=1},{location="env.lua",workspace_index=1},{location="patch/main.lua#23",workspace_index=1}}]]
 :: embed/.info.pod
---[[pod,created="2025-11-24 23:32:11",modified="2025-12-14 19:08:39"]]
+--[[pod,created="2025-11-24 23:32:11",modified="2025-12-14 19:19:59"]]
 :: gfx/.info.pod
---[[pod,created="2025-11-24 23:32:11",modified="2025-12-14 19:08:39"]]
+--[[pod,created="2025-11-24 23:32:11",modified="2025-12-14 19:19:59"]]
 :: gfx/0.gfx
 b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTAxLTE3IDEwOjM1OjQ4Iixtb2RpZmllZD0iMjAyNS0x
 MS0yMiAyMDo1NDoxOSIscmV2aXNpb249MTE3XV1sejQApgUAANU8AAD1D3tbMF09e2JtcD1weHUA
@@ -3732,16 +3728,16 @@ NMUENMYkxDTQJMA0yhTHNMkUyDTFFMw0xxTINMUUBDTA-kAoMP5wMCgEwP6oUDD_cDAo-kAoMMA0
 wAQUNMUUyDTIFMg0yBTINMYUzDT9-f3ZBMI0BMI0BDTDBME0wATBNAQ0wgTCNMAEwDTABMI0BME0
 -f39-f39-e4AAAAAAAAAAQ==
 :: map/.info.pod
---[[pod,created="2025-11-24 23:32:11",modified="2025-12-14 19:08:39"]]
+--[[pod,created="2025-11-24 23:32:11",modified="2025-12-14 19:19:59"]]
 :: map/0.map
 b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTAxLTE3IDEwOjM1OjQ4Iixtb2RpZmllZD0iMjAyNS0w
 MS0xNyAxMDozNzo0NCIscmV2aXNpb249MV1dbHo0AFQAAABEEAAA8Ah7e2JtcD11c2VyZGF0YSgi
 aTE2IiwzMgMALyIwAQD--------------------7oSIpLHBhbl94PTAIANJ5PTAsdGlsZV9oPTE2
 CgBgdz0xNn19
 :: patch/.info.pod
---[[pod,created="2025-11-24 23:32:11",modified="2025-12-14 19:08:39"]]
+--[[pod,created="2025-11-24 23:32:11",modified="2025-12-14 19:19:59"]]
 :: sfx/.info.pod
---[[pod,created="2025-11-24 23:32:12",modified="2025-12-14 19:08:39"]]
+--[[pod,created="2025-11-24 23:32:12",modified="2025-12-14 19:19:59"]]
 :: sfx/0.sfx
 b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTA3LTMxIDA4OjMwOjI4Iixtb2RpZmllZD0iMjAyNS0w
 Ny0zMSAwODozMDoyOCIscmV2aXNpb249MF1dbHo0AKAAAAALCgAA-zBweHUAAygAAAQABA9AEAIO
@@ -3749,5 +3745,5 @@ AAGgASACoA4ADxAADfDKAQIDQA8PkAQFBgdADJAICQoLQAyQDwwPDQ8ODEAM8P8BAOv-J6oBEAYP
 MBABIAEgAfAAAhACDhABIA8hIAEwD0Dwww8oD--wxg-4Cg--D4AP9w8NAfAJARAGDjAA------_9
 H-8BAKzPyA9AAA8QQP--sPD-AQD-6lD-----KQ==
 :: utils/.info.pod
---[[pod,created="2025-11-24 23:32:12",modified="2025-12-14 19:08:39"]]
+--[[pod,created="2025-11-24 23:32:12",modified="2025-12-14 19:19:59"]]
 :: [eoc]

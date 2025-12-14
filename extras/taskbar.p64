@@ -126,7 +126,7 @@ if (styling.appAlign!="right") then
 	})
 end
 --Get data
-apps=loadApps(saveDir,"apps.txt",{"/system/packaged/net_nexum.p64","/system/apps/filenav.p64","/system/packaged/springloader.p64.p64"})
+apps=loadApps(saveDir,"apps.txt",{"/system/packaged/net_nexum.p64","/system/apps/filenav.p64","/system/packaged/springloader.p64"})
 
 --allows the window to be minimum size
 
@@ -744,9 +744,9 @@ function updateWidgetPositions(a)
 	end
 end
 :: .info.pod
---[[pod,author="Astralsparv",bbs_id="taskbar-2",created="2025-07-19 13:32:35",icon=userdata("u8",16,16,"00000000001010101010100000000000000000101001010101010110100000000000100101010101010101010110000000100101010e0e01010e0e0101011000001001010e171e0e0e1e170e010110001001010e1717171e1e1717170e0101101001010e1e17170e0e17171e0e010110100101010e1e0e0e0e0e1e0e01010110100101010e1e0e0e0e0e1e0e010101101001010e1e17170e0e17171e0e0101101001010e1717171e1e1717170e010110001001010e171e0e0e1e170e0101100000100101010e0e01010e0e0101011000000010010101010101010101011000000000001010010101010101101000000000000000001010101010100000000000"),modified="2025-12-14 19:08:36",notes="Fully customisable taskbar & Start menu",runtime=24,sandbox=false,title="Taskbar",version="v1.0",workspaces={{location="main.lua#82",workspace_index=1},{location="widgets.lua#100",workspace_index=1},{location="start.lua#168",workspace_index=1},{location="files.lua#10",workspace_index=1}}]]
+--[[pod,author="Astralsparv",bbs_id="taskbar-2",created="2025-07-19 13:32:35",icon=userdata("u8",16,16,"00000000001010101010100000000000000000101001010101010110100000000000100101010101010101010110000000100101010e0e01010e0e0101011000001001010e171e0e0e1e170e010110001001010e1717171e1e1717170e0101101001010e1e17170e0e17171e0e010110100101010e1e0e0e0e0e1e0e01010110100101010e1e0e0e0e0e1e0e010101101001010e1e17170e0e17171e0e0101101001010e1717171e1e1717170e010110001001010e171e0e0e1e170e0101100000100101010e0e01010e0e0101011000000010010101010101010101011000000000001010010101010101101000000000000000001010101010100000000000"),modified="2025-12-14 19:19:59",notes="Fully customisable taskbar & Start menu",runtime=24,sandbox=false,title="Taskbar",version="v1.0",workspaces={{location="main.lua#82",workspace_index=1},{location="widgets.lua#100",workspace_index=1},{location="start.lua#168",workspace_index=1},{location="files.lua#10",workspace_index=1}}]]
 :: gfx/.info.pod
---[[pod,created="2025-07-19 13:32:35",modified="2025-12-14 19:08:36"]]
+--[[pod,created="2025-07-19 13:32:35",modified="2025-12-14 19:19:59"]]
 :: label.qoi
 b64$cW9pZgAAAeAAAAEOBAH-AAAA-P39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39
 -f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39
@@ -787,7 +787,7 @@ b64$cW9pZgAAAeAAAAEOBAH-AAAA-P39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39
 -f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39-f39
 -f390gAAAAAAAAAB
 :: map/.info.pod
---[[pod,created="2025-07-19 13:32:35",modified="2025-12-14 19:08:36"]]
+--[[pod,created="2025-07-19 13:32:35",modified="2025-12-14 19:19:59"]]
 :: sfx/.info.pod
---[[pod,created="2025-07-19 13:32:35",modified="2025-12-14 19:08:36"]]
+--[[pod,created="2025-07-19 13:32:35",modified="2025-12-14 19:19:59"]]
 :: [eoc]

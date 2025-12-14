@@ -2749,34 +2749,223 @@ end
 
 
 :: main.lua
---[[pod_format="raw",created="2025-11-24 20:20:33",galaktisk=true,modified="2025-11-24 20:41:33",revision=13]]--env()!!
+--[[pod_format="raw",created="2023-10-20 06:24:13",modified="2025-04-19 19:20:42",revision=3778,stored="2023-21-29 09:21:19"]]
+--[[
+	fi: shuffleable stacks dev
+]]
+include "icon.lua"
+include "list.lua"
+include "grid.lua"
+include "desktop.lua"
+include "open.lua"
+include "interf.lua"
+include "tabcomp.lua"
+include "finfo.lua"
+include "drop.lua"
+include "intention.lua"
+-----------------------
+
+
+function _init()
 
 --[[
-not working:
-	select_file
-	desktop (unsure if will ever be supported)
-]]--
+	-- deleteme -- merged filenav.pod into settings.pod in 0.2.0e
+	config = fetch"/appdata/system/filenav.pod" or {}
+	on_event("modified:/appdata/system/filenav.pod", function()	
+		config = fetch"/appdata/system/filenav.pod" or {}
+		finfo_version += 1
+	end)
+]]
+	settings = fetch"/appdata/system/settings.pod" or {}
+	on_event("modified:/appdata/system/settings.pod", function()	
+		settings = fetch"/appdata/system/settings.pod" or {}
+		finfo_version += 1 -- bump
+	end)
 
-_env=env()
-if (_env.sandbox=="bbs") then
-	notify("This doesn't run correctly when sandboxed - going to zeps")
+	on_event("modified:/ram/shared/theme.pod", function()
+		generate_icon_palettes()
+	end)
+	
+
+	start_path = env().path or "/"
+	cd(start_path)
+
+	
+	-- debugging: if path does not succeed filenav.p64 displays own contents
+	-- confusing in desktop mode if can't find /desktop at end up in /system/apps/filenav.p64/ -> stop rendering and show an error instead
+	if (pwd() ~= start_path and pwd().."/" ~= start_path) then
+		if (mode == "desktop") cd_failed = true
+	end
+
+	-- initial intention can be received via env() (e.g. desktop -> new file)
+	push_intention(
+		env().intention or intention, 
+		env().intention and env().parent_pid, 
+		env().intention and env().intention_filename
+	)
+	
+	poke(0x4000,get(fetch"/system/fonts/lil.font"))
+	poke(0x5600,get(fetch"/system/fonts/p8.font"))
+
+--	poke(0x4000,get(fetch"/system/fonts/pug3.font")) -- test
+--	poke(0x4000,get(fetch"/system/fonts/p8.font")) -- test
+
+	local title = intention_title or pwd()
+	if (intention_window_title) then
+		title = intention_window_title
+		if (intention_filename) then
+			title..=" "..intention_filename:basename()
+		end
+	end
+
+	window{
+		width = 272, height = 160,
+		min_width = 80, min_height = 60,
+		--squashable = true,   -- commented: jumps around too much. maybe later
+		title = title,
+		has_context_menu = true -- mb2 to open app menu // to do: indicate which items are for context menu
+	}
+
+	-- mode: list, grid, desktop
+	mode = "grid"
+	--mode = "desktop"
+	
+	
+	desktop_path = "/desktop"
+	if (env().argv and env().argv[1] == "-desktop") then
+		mode = "desktop"
+		--if (env().desktop_path) desktop_path = env().desktop_path	
+		if (env().argv[2]) desktop_path = env().argv[2]
+		cd(desktop_path) -- path never changes after this in desktop mode
+	end
+	
+	if (env().argv and env().argv[1]) then
+		local ff=env().argv[1]
+		if (fstat(ff) == "folder") cd(ff)
+	end
+	
+
+	generate_icon_palettes()
+	generate_interface()
+	
 end
---failsafe to go to zep's filenav for anything unsupported
---zep arg to just always go to zeps
-if (not (
-(_env.argv and _env.argv[1]=="-desktop")
-or (_env.argv and _env.argv[1]=="zep")
-or (_env.zep)
-or (_env.sandbox=="bbs")
---or true
-)) then
-	_env.corun_program=nil
-	create_process("/appdata/galaktiskFilenav/filenav.p64",_env)
-else
-	_env.corun_program=nil
-	create_process("/appdata/galaktiskFilenav/zepsfilenav.p64",_env)
-	exit()
+
+local back_page = nil
+local last_state_str = nil
+local last_state_mb
+
+function _draw()
+
+	local t0=stat(1)
+
+	gui:draw_all() 
+	
+
+	clip()
+	camera()
+	
+	if cd_failed then
+		print("\#7 [filenav: can not access path: "..start_path.."] ",20,36,5) 
+	end
+
+--[[ to do: preview drop position (need to take drag offset into account, and maybe show group
+	if (dragging_files and settings.snap_to_grid) then
+		local mx,my = mouse()
+		mx = 45+((-45 + mx + 33) \ 66) * 66
+		my = 16+((-16 + my + 25) \ 50) * 50
+		mx = mid(-21,mx,375)
+		my = mid(16,my,216)
+		circ(mx,my+10,20,10)
+	end
+]]
+
+	-- fps
+	if (false) then
+		rectfill(get_display():width()-32,0,10000,12,1)
+		print((stat(1)-t0)\0.01,get_display():width()-30,12,8)
+	end
+
+--	print(dragging_files ~= nil and "dragging" or "---",2,20,7)
+
 end
+
+local last_poll_t = 0
+function _update()
+
+--[[ don't need -- is invoked by app menu shortcut
+	if (key"ctrl") then
+		if (keyp"i") open_selected_file_info()
+	end
+--]]
+
+	-- to do: app menu shortcuts?
+	if (key"ctrl" and keyp"x") then
+		copy_selected_files("cut")
+	end
+	if (key"ctrl" and keyp"c") then
+		copy_selected_files("copy")
+	end
+	
+	if refresh_gui then
+		--if (mode != "desktop") -- 0.1.0c: commented ~ generate interface even on desktop (allow file ops)
+		generate_interface()
+		refresh_gui = false
+	end
+	
+	-- to do: could be every 4 seconds
+	-- + update immediately when gaining focus or some file activity detected 
+	-- (global timestamp of last change in /ram/system? "modifed:.." event applied to folders?)
+
+	if (pwd():prot()) then
+		-- test: load bbs:// and anywhen:// icons gradually. 
+		-- update: commented. fine to load all at once from carts.lexaloffle.com and don't need to update listing automatically
+		-- anywhen also currently too heavy for that and don't need it
+--[[
+		if (time() > last_poll_t + 1.0) then
+			local l=ls()
+			zxc = zxc and zxc or 0
+			zxc = (zxc + 1) % #l
+			printh(#(fetch(l[1 + zxc].."/main.lua") or ""))
+			update_file_info(true)
+			last_poll_t = time()
+		end
+]]
+	else
+		-- refresh all every second (needed for detecting changes on host system -- hard to detect reliably)
+		--  0.2.0h: when visible; costs 1% cpu with 2 filenavs open on boot. note: means will immediately refresh when regain visibility
+		local refresh_freq = (fi and #fi < 256) and 1 or 5 -- many files: don't want to refresh frequently
+		if ((peek(0x547f) & 0x1) > 0 and time() > last_poll_t + refresh_freq) then
+			update_file_info()
+			last_poll_t = time()
+		end
+	
+	end
+
+	
+	
+	--if (not key"shift") 
+	gui:update_all()
+
+end
+
+on_event("gained_visibility", function()
+	if (mode == "desktop") fetch_desktop_items()
+end)
+--[[
+-- nope ~ too slow
+on_event("lost_visibility", function()
+	if (mode == "desktop") store_desktop_items()
+end)
+]]
+
+on_event("filenav_refresh", function()
+	-- printh("@@ refreshing filenav **")
+	update_file_info(true) -- invalidate cache
+	--refresh_gui = true
+end)
+
+
+
 :: open.lua
 --[[pod_format="raw",created="2023-10-04 12:46:16",modified="2025-04-19 19:20:42",revision=3377,stored="2023-21-29 09:21:19"]]
 
@@ -2930,9 +3119,9 @@ end
 
 
 :: .info.pod
---[[pod,author="zep",created="2023-11-15 07:11:30",icon=userdata("u8",16,16,"01010101010101010101010101010101010e0e070707070707070707070e0e01010e0e070107070707070701070e0e01010e0e070107070707070701070e0e01010e0e070707070707070707070e0e01010e0e07070e070707070e07070e1701010e0e0707070e0e0e0e070707171701010e0e07070707070707070707171701010e0e0e0e0e0e0e0e0e0e1717170e01010e0e0e0e0e0e0e0e0e1717170e0e01010e0e0e0e0e0e0e0e1717170e0e0e01010e0e010101010101010101010e0e01010e0e010101010707070707010e0e01010e0e010101010707070707010e0e01010e0e010101010707070707010e010001010101010101010101010101010000"),modified="2025-12-14 19:08:38",notes="(c) Lexaloffle Games LLP",runtime=20,stored="2024-03-24 15:35:56",title="Picotron File Navigator",version="0.1.1d",workspaces={{location="main.lua#39",workspace_index=1},{location="interf.lua#5",workspace_index=1},{location="grid.lua#1",workspace_index=1},{location="drop.lua#1",workspace_index=1},{location="open.lua#1",workspace_index=1},{location="intention.lua#1",workspace_index=1},{location="desktop.lua#1",workspace_index=1},{location="finfo.lua#234",workspace_index=1},{location="list.lua#1",workspace_index=1},{location="gfx/0.gfx",workspace_index=2}}]]
+--[[pod,author="zep",created="2023-11-15 07:11:30",icon=userdata("u8",16,16,"01010101010101010101010101010101010e0e070707070707070707070e0e01010e0e070107070707070701070e0e01010e0e070107070707070701070e0e01010e0e070707070707070707070e0e01010e0e07070e070707070e07070e1701010e0e0707070e0e0e0e070707171701010e0e07070707070707070707171701010e0e0e0e0e0e0e0e0e0e1717170e01010e0e0e0e0e0e0e0e0e1717170e0e01010e0e0e0e0e0e0e0e1717170e0e0e01010e0e010101010101010101010e0e01010e0e010101010707070707010e0e01010e0e010101010707070707010e0e01010e0e010101010707070707010e010001010101010101010101010101010000"),modified="2025-12-14 19:20:01",notes="(c) Lexaloffle Games LLP",runtime=20,stored="2024-03-24 15:35:56",title="Picotron File Navigator",version="0.1.1d",workspaces={{location="main.lua#39",workspace_index=1},{location="interf.lua#5",workspace_index=1},{location="grid.lua#1",workspace_index=1},{location="drop.lua#1",workspace_index=1},{location="open.lua#1",workspace_index=1},{location="intention.lua#1",workspace_index=1},{location="desktop.lua#1",workspace_index=1},{location="finfo.lua#234",workspace_index=1},{location="list.lua#1",workspace_index=1},{location="gfx/0.gfx",workspace_index=2}}]]
 :: gfx/.info.pod
---[[pod,created="2023-11-15 07:11:30",modified="2025-12-14 19:08:38",stored="2023-11-15 07:11:30"]]
+--[[pod,created="2023-11-15 07:11:30",modified="2025-12-14 19:20:01",stored="2023-11-15 07:11:30"]]
 :: gfx/0.gfx
 b64$LS1bW3BvZCxjcmVhdGVkPSIyMDIzLTEwLTIwIDA2OjM4OjU2Iixtb2RpZmllZD0iMjAyNS0w
 Ny0yOCAxNTo1MTozNCIscmV2aXNpb249MzE1MCxzdG9yZWQ9IjIwMjMtMzQtMDkgMTk6MzQ6NTMi
@@ -2964,22 +3153,22 @@ AEMgEBAE8PAsZmxhZ3M9MCxwYW5feAgAz3k9MCx6b29tPTh9LDEAKfUBCAgENzAHEBcgBxAnEAcw
 BwQAL1eQRwAuj1eQBwAHAAcgSQAODvIADzEA----------------------------------------
 ------------------------QlBtPTh9fQ==
 :: gfx/delme/.info.pod
---[[pod,created="2023-10-11 07:54:06",modified="2025-12-14 19:08:38",stored="2023-54-11 07:54:06"]]
+--[[pod,created="2023-10-11 07:54:06",modified="2025-12-14 19:20:01",stored="2023-54-11 07:54:06"]]
 :: gfx/delme2/.info.pod
---[[pod,created="2023-02-11 08:02:20",modified="2025-12-14 19:08:38",stored="2023-02-11 08:02:20"]]
+--[[pod,created="2023-02-11 08:02:20",modified="2025-12-14 19:20:01",stored="2023-02-11 08:02:20"]]
 :: gfx/ha/.info.pod
---[[pod,created="2023-09-11 08:09:44",modified="2025-12-14 19:08:38",stored="2023-09-11 08:09:44"]]
+--[[pod,created="2023-09-11 08:09:44",modified="2025-12-14 19:20:01",stored="2023-09-11 08:09:44"]]
 :: gfx/zxc/.info.pod
---[[pod,created="2023-10-11 07:41:41",modified="2025-12-14 19:08:38",stored="2023-41-11 07:41:41"]]
+--[[pod,created="2023-10-11 07:41:41",modified="2025-12-14 19:20:01",stored="2023-41-11 07:41:41"]]
 :: map/.info.pod
---[[pod,created="2024-03-07 10:11:56",modified="2025-12-14 19:08:38",stored="2024-03-07 10:11:56"]]
+--[[pod,created="2024-03-07 10:11:56",modified="2025-12-14 19:20:01",stored="2024-03-07 10:11:56"]]
 :: map/map0.map
 b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI0LTAzLTA3IDEwOjExOjU2Iixtb2RpZmllZD0iMjAyNC0w
 My0wNyAxMDoxMjowMSIscmV2aXNpb249MV1dbHo0AGkAAACjCAAA8BN7bGF5ZXI9e1swXT17Ym1w
 PXVzZXJkYXRhKCJpMTYiLDE2AwAvIjABAP---__hIikscGFuX3g9MAgA8gZ5PTAsc2NhbGU9MSx0
 aWxlX2g9MTYKAG93PTE2fSxLBP----84UDE2fX19
 :: sfx/.info.pod
---[[pod,created="2024-03-07 10:11:56",modified="2025-12-14 19:08:38",stored="2024-03-07 10:11:56"]]
+--[[pod,created="2024-03-07 10:11:56",modified="2025-12-14 19:20:01",stored="2024-03-07 10:11:56"]]
 :: sfx/sfx0.sfx
 b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI0LTAzLTA3IDEwOjExOjU2Iixtb2RpZmllZD0iMjAyNC0w
 My0wNyAxMDoxMjowMSIscmV2aXNpb249MV1dbHo0ABABAABRBwAA8CdweHUAAygAAAMABA9AEAIO

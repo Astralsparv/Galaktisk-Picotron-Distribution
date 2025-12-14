@@ -1,6 +1,5 @@
 --[[pod_format="raw",created="2025-12-14 18:53:51",modified="2025-12-14 19:05:41",revision=3]]
 
-
 -- load settings
 local sdat = fetch"/appdata/system/settings.pod"
 if type(sdat) ~= "table" -- doesn't exist or needs to be mended
@@ -73,7 +72,7 @@ local ff = ls("/desktop")
 if (not ff or #ff == 0 or stat(317) > 0) then
 	mkdir ("/desktop") -- just in case
 	cp("/system/misc/drive.loc", "/desktop/drive.loc")
-	cp("/system/misc/galaktisk.txt", "/desktop/galakitsk.txt")
+	cp("/system/misc/galaktisk.txt", "/desktop/galaktisk.txt")
 	mkdir("/desktop/apps")
 	if ((stat(317) & 0x2) == 0) cp("/system/misc/readme.txt", "/desktop/readme.txt") -- no readme for exports
 end
@@ -88,7 +87,6 @@ if fstat("/desktop/readme.txt") then
 	local dd,mm = fetch("/desktop/readme.txt") -- fetch_metadata not defined yet
 	if (not mm or not mm.icon or mm.pod_format ~= "raw") cp("/system/misc/readme.txt", "/desktop/readme.txt")
 end
-
 
 -- present working cartridge
 local num = 0
@@ -171,7 +169,7 @@ if (system_meta.version ~= system_version) then
 end
 ------------------------------------------------------------------------------------------------
 
-
+_printh("meow")
 -- starting userland programs (with blank untitled files)
 
 -- open editors and create default cart layout
@@ -193,6 +191,7 @@ mount("/system/util/edit.lua","/system/util/open.lua")
 -- 0.2.0e: inside a regular process so that can use bbs:// carts as default editors (startup.lua is not wrapped by create_process())
 
 create_process("/system/misc/load_workspaces.lua")
+
 
 --[[
 if stat(317) > 0 then 

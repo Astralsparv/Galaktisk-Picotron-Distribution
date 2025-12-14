@@ -4034,7 +4034,7 @@ function saveOpenTabs()
 	store("/appdata/netnexum/tabs.pod",otabs)
 end
 :: .info.pod
---[[pod,author="Astralsparv",bbs_id="picoml_browser-16",created="2025-11-15 00:17:11",icon=userdata("u8",16,16,"00000000000000000000000000000000001e1e00001e1e1e1d1e1e1e00000000001e001e1d1e1e0d1d0d1e1d1d000000001e001e0d1e0d0d1d0d1e1d0d1d0000001e1d1e0d1e1e1e1d0d1e1d0d0d1d0000001d1d1d1d1d1d1d1d1d1d1d1d1d00001d0d0d1d0d0d0d1d0d0d0d1d0d0d1d001d0d0d1d0d0d0d1d0d0d0d1d0d0d1d001d1d1d1d1d1d1d1d1d1d1d1d1d1d1d001d0d0d1d0d0d0d1d0d0d0d1d0d0d1d001d0d0d1d0d0d0d1d0d0d0d1d0d0d1d00001d1d1e1e1d1d1e1e1e1d1e1d1e0000001d0d1e1d1e0d1e1e0d1d0d1e1d000000001d1e1d1e0d1e0d0d1d0d1e0000000000001e1d1e0d1e1e1e1d1e001e000000000000001d1d1d1d1d0000000000"),modified="2025-12-14 19:08:36",notes="Browser for PML\nSettings in /appdata/netnexum/\nRunning PML 2.3\nRunning Experimental MD Library",runtime=24,sandbox=false,title="Net Nexum",version="indev7.4",workspaces={{location="main.lua#124",workspace_index=1},{location="tabs.lua#42",workspace_index=1},{location="pageHandlers/markdown.lua#20",workspace_index=1},{location="pageHandlers/picoml.lua",workspace_index=1},{location="pageHandlers/raw.lua#9",workspace_index=1},{location="gfx/0.gfx",workspace_index=2}}]]
+--[[pod,author="Astralsparv",bbs_id="picoml_browser-16",created="2025-11-15 00:17:11",icon=userdata("u8",16,16,"00000000000000000000000000000000001e1e00001e1e1e1d1e1e1e00000000001e001e1d1e1e0d1d0d1e1d1d000000001e001e0d1e0d0d1d0d1e1d0d1d0000001e1d1e0d1e1e1e1d0d1e1d0d0d1d0000001d1d1d1d1d1d1d1d1d1d1d1d1d00001d0d0d1d0d0d0d1d0d0d0d1d0d0d1d001d0d0d1d0d0d0d1d0d0d0d1d0d0d1d001d1d1d1d1d1d1d1d1d1d1d1d1d1d1d001d0d0d1d0d0d0d1d0d0d0d1d0d0d1d001d0d0d1d0d0d0d1d0d0d0d1d0d0d1d00001d1d1e1e1d1d1e1e1e1d1e1d1e0000001d0d1e1d1e0d1e1e0d1d0d1e1d000000001d1e1d1e0d1e0d0d1d0d1e0000000000001e1d1e0d1e1e1e1d1e001e000000000000001d1d1d1d1d0000000000"),modified="2025-12-14 19:20:00",notes="Browser for PML\nSettings in /appdata/netnexum/\nRunning PML 2.3\nRunning Experimental MD Library",runtime=24,sandbox=false,title="Net Nexum",version="indev7.4",workspaces={{location="main.lua#124",workspace_index=1},{location="tabs.lua#42",workspace_index=1},{location="pageHandlers/markdown.lua#20",workspace_index=1},{location="pageHandlers/picoml.lua",workspace_index=1},{location="pageHandlers/raw.lua#9",workspace_index=1},{location="gfx/0.gfx",workspace_index=2}}]]
 :: LICENSE
 b64$TUlUIExpY2Vuc2UNCg0KQ29weXJpZ2h0IChjKSAyMDI1IEFzdHJhbHNwYXJ2DQoNClBlcm1p
 c3Npb24gaXMgaGVyZWJ5IGdyYW50ZWQsIGZyZWUgb2YgY2hhcmdlLCB0byBhbnkgcGVyc29uIG9i
@@ -4059,7 +4059,7 @@ RlRXQVJFLg==
 :: README.md
 b64$IyBwaWNvbWwucDY0CnBpY28gbWw=
 :: fonts/.info.pod
---[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:08:36"]]
+--[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:20:00"]]
 :: fonts/0.font
 b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTEyLTA2IDIyOjUzOjAwIixpY29uPXVzZXJkYXRhKCJ1
 OCIsMTYsMTYsIjAwMDEwMTAxMDEwMTAxMDEwMTAxMDEwMDAwMDAwMDAwMDAwMTA3MDcwNzA3MDcw
@@ -4074,7 +4074,7 @@ MDAwMDAxMDcwNzA3MDcwNzA3MDcwNzA3MDcwNzA3MDEwMDAwMDEwMTAxMDEwMTAxMDEwMTAxMDEw
 MTAxMDEwMTAwIiksbW9kaWZpZWQ9IjIwMjUtMTItMDYgMjI6NTM6MDAiLHJldmlzaW9uPTBdXWx6
 NAAWAAAAFAAAAPAFcHh1AAMoAAgAAATw----------c=
 :: gfx/.info.pod
---[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:08:36"]]
+--[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:20:00"]]
 :: gfx/0.gfx
 b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTAxLTE3IDEwOjM1OjQ4Iixtb2RpZmllZD0iMjAyNS0x
 Mi0wNyAwMDoyNTozMiIscmV2aXNpb249MTk1XV1sejQAwAUAANxBAADwFHtbMF09e2JtcD1weHUA
@@ -4397,19 +4397,19 @@ JAQkBCQEJAQkwATIJMEEwyTBBP39-f39-foswxTABMIkBCQEwSQEJAQkwATAJATCJATGJATDJAT9
 -f39-f38LMMUNBQEJMAEwSTABCTABMAkBCQEwCTABMkkBMAkBMAkwQT9-f39-f36LMIUNMEU-f39
 -f39-eg0wAAAAAAAAAAB
 :: map/.info.pod
---[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:08:36"]]
+--[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:20:00"]]
 :: map/0.map
 b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTAxLTE3IDEwOjM1OjQ4Iixtb2RpZmllZD0iMjAyNS0x
 MS0xNSAwMTozNToxMyIscmV2aXNpb249Ml1dbHo0AEsAAABQAAAA8Rx7e2JtcD1weHUATIAgIAD-
 AAD---8DLGhpZGRlbj1mYWxzZSxwYW5feD0wCADDeT0wLHRpbGVfaD0xCgAQdwoAgHpvb209MX19
 :: pageHandlers/.info.pod
---[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:08:36"]]
+--[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:20:00"]]
 :: popups/.info.pod
---[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:08:36"]]
+--[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:20:00"]]
 :: self/.info.pod
---[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:08:36"]]
+--[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:20:00"]]
 :: self/404/.info.pod
---[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:08:36"]]
+--[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:20:00"]]
 :: self/404/main.picoml
 b64$LS1bW3BvZF9mb3JtYXQ9InJhdyIsY3JlYXRlZD0iMjAyNS0xMS0xNSAxOTowNzozOCIsbW9k
 aWZpZWQ9IjIwMjUtMTEtMjggMjA6NDk6MjAiLHJldmlzaW9uPTExXV0KPG1ldGFkYXRhIHRpdGxl
@@ -4418,9 +4418,9 @@ YjY0OmJIbzBBQ3NBQUFBc0FBQUE4d2R3ZUhVQVF5QUtDZ1NRQ0FBSU1BZ0FDQUFJVUFnQURBRHdB
 TEJZTUFnd0NEQUlNQWd3Q0RBSXNBPT0iKSc_PC9tZXRhZGF0YT4KCjx0aXRsZSBhbGlnbj0ibGVm
 dCI_NDA0IFBhZ2UgTm90IEZvdW5kPC90aXRsZT4=
 :: self/docs/.info.pod
---[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:08:36"]]
+--[[pod,created="2025-12-08 19:51:37",modified="2025-12-14 19:20:00"]]
 :: self/docs/lua/.info.pod
---[[pod,created="2025-12-08 19:51:38",modified="2025-12-14 19:08:36"]]
+--[[pod,created="2025-12-08 19:51:38",modified="2025-12-14 19:20:00"]]
 :: self/docs/lua/main.picoml
 b64$LS1bW3BvZF9mb3JtYXQ9InJhdyIsY3JlYXRlZD0iMjAyNS0xMS0xNiAwNzo1MzowOCIsbW9k
 aWZpZWQ9IjIwMjUtMTEtMjkgMTk6MTI6MjAiLHJldmlzaW9uPTQ1XV0KPG1ldGFkYXRhIGljb249
@@ -4505,7 +4505,7 @@ IC0gaGVpZ2h0IG9mIGFuIGltYWdlLCAiYXV0byIgKHJlc2l6ZXMgaW1hZ2UgdG8gZml0IHdlbGwp
 LCBkZWZhdWx0cyB0byBmdWxsIHJlc29sdXRpb24Kc3JjIC0gc291cmNlIG9mIHRoZSBpbWFnZSAo
 YSBwb2RkZWQgaW1hZ2UvdXNlcmRhdGEgb3IgcG5nKQo8L3RleHQ_
 :: self/newtab/.info.pod
---[[pod,created="2025-12-08 19:51:38",modified="2025-12-14 19:08:36"]]
+--[[pod,created="2025-12-08 19:51:38",modified="2025-12-14 19:20:00"]]
 :: self/newtab/main.picoml
 b64$LS1bW3BvZF9mb3JtYXQ9InJhdyIsY3JlYXRlZD0iMjAyNS0xMS0xNSAyMzo1OToxNSIsbW9k
 aWZpZWQ9IjIwMjUtMTEtMzAgMDM6Mjk6MzgiLHJldmlzaW9uPTI3XV0KPG1ldGFkYXRhIHRpdGxl
@@ -4519,7 +4519,7 @@ ZjovL3dlbGNvbWUiIHdoZXJlPSJzZWxmIj5XZWxjb21lIHBhZ2U8L2xpbms_CjxsaW5rIGFsaWdu
 PSJjZW50ZXIiIHRhcmdldD0ic2VsZjovL3NjcmlwdCIgd2hlcmU9InNlbGYiPkV4YW1wbGUgb2Yg
 c2NyaXB0czwvbGluaz4=
 :: self/script/.info.pod
---[[pod,created="2025-12-08 19:51:38",modified="2025-12-14 19:08:36"]]
+--[[pod,created="2025-12-08 19:51:38",modified="2025-12-14 19:20:00"]]
 :: self/script/main.picoml
 b64$LS1bW3BvZF9mb3JtYXQ9InJhdyIsY3JlYXRlZD0iMjAyNS0xMS0xNiAyMToxMzo1OSIsbW9k
 aWZpZWQ9IjIwMjUtMTEtMjggMjA6NDk6NDkiLHJldmlzaW9uPTE3XV0KPG1ldGFkYXRhIHRpdGxl
@@ -4534,7 +4534,7 @@ ZXh0IGlkPSJjcHUiPkNQVSBVc2FnZSBsb2FkaW5nITwvdGV4dD4KPHRleHQgaWQ9Im1vdXNlIj5N
 b3VzZSBYOiBuaWwsIHk6IG5pbDwvdGV4dD4KCjxzY3JpcHQgc3JjPSJtYWluLmx1YSI_PC9zY3Jp
 cHQ_
 :: self/welcome/.info.pod
---[[pod,created="2025-12-08 19:51:38",modified="2025-12-14 19:08:36"]]
+--[[pod,created="2025-12-08 19:51:38",modified="2025-12-14 19:20:00"]]
 :: self/welcome/main.picoml
 b64$LS1bW3BvZF9mb3JtYXQ9InJhdyIsY3JlYXRlZD0iMjAyNS0xMS0xNSAxOTozNzowMSIsbW9k
 aWZpZWQ9IjIwMjUtMTEtMzAgMjM6NDk6MjIiLHJldmlzaW9uPTU2XV0KPG1ldGFkYXRhIHRpdGxl
@@ -4562,7 +4562,7 @@ aXRsZT5jcmVkaXRzOjwvdGl0bGU_Cjx0ZXh0PkBtZWl2dXUgLSB0aGUgM2Qgc3R5bGUgb2YgdGhl
 IG5hdmJhciBpcyAqaGVhdmlseSogaW5zcGlyZWQgYnkgdGhlaXIgU3VwZXIgUGljb25ldCBFeHBs
 b3JlciE8L3RleHQ_
 :: sfx/.info.pod
---[[pod,created="2025-12-08 19:51:38",modified="2025-12-14 19:08:36"]]
+--[[pod,created="2025-12-08 19:51:38",modified="2025-12-14 19:20:00"]]
 :: sfx/0.sfx
 b64$LS1bW3BvZCxjcmVhdGVkPSIyMDI1LTA3LTMxIDA4OjMwOjI4Iixtb2RpZmllZD0iMjAyNS0x
 MS0xNSAwMTozNToxNiIscmV2aXNpb249MV1dbHo0AKAAAAALCgAA-zBweHUAAygAAAQABA9AEAIO
