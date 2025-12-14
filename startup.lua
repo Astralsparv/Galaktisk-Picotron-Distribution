@@ -169,7 +169,6 @@ if (system_meta.version ~= system_version) then
 end
 ------------------------------------------------------------------------------------------------
 
-_printh("meow")
 -- starting userland programs (with blank untitled files)
 
 -- open editors and create default cart layout
