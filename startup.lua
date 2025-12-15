@@ -1,5 +1,4 @@
---[[pod_format="raw",created="2025-12-14 18:53:51",modified="2025-12-14 19:24:18",revision=4]]
-
+--[[pod_format="raw",created="2025-12-14 18:53:51",modified="2025-12-14 19:36:31",revision=6]]
 -- load settings
 local sdat = fetch"/appdata/system/settings.pod"
 if type(sdat) ~= "table" -- doesn't exist or needs to be mended
@@ -232,6 +231,3 @@ else
 
 end
 ]]
-
-
-
